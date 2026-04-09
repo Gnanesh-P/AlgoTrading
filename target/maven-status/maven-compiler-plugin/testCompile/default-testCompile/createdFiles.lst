@@ -1,0 +1,7 @@
+com\algotrading\backend\integration\MarketDataIntegrationTest.class
+com\algotrading\backend\integration\AuthIntegrationTest.class
+com\algotrading\backend\AlgoTradingApplicationTests.class
+com\algotrading\backend\integration\TradingStrategyIntegrationTest.class
+com\algotrading\backend\service\CandleAggregatorServiceTest.class
+com\algotrading\backend\integration\ConfigIntegrationTest.class
+com\algotrading\backend\service\OptionInstrumentServiceTest.class

@@ -1,0 +1,4 @@
+-------------------------------------------------------------------------------
+Test set: com.algotrading.backend.integration.AuthIntegrationTest
+-------------------------------------------------------------------------------
+Tests run: 6, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 10.17 s -- in com.algotrading.backend.integration.AuthIntegrationTest

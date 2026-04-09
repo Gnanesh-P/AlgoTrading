@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>NIFTY Algo Trading</title>
+  <link rel="stylesheet" href="/css/style.css"/>
+</head>
+<body>
+
+<!-- LOGIN SCREEN -->
+<div id="login-screen" class="screen">
+  <div class="login-box">
+    <div class="logo">📈 NIFTY Algo</div>
+    <h2>Sign In</h2>
+    <div class="form-group">
+      <label>Username</label>
+      <input type="text" id="username" value="" placeholder="admin"/>
+    </div>
+    <div class="form-group">
+      <label>Password</label>
+      <input type="password" id="password" value="" placeholder="Password"/>
+    </div>
+    <button class="btn btn-primary btn-full" onclick="login()">Login</button>
+    <div id="login-error" class="error-msg hidden"></div>
+  </div>
+</div>
+
+<!-- MAIN DASHBOARD -->
+<div id="dashboard" class="screen hidden">
+
+  <!-- TOP NAV -->
+  <nav class="topnav">
+    <div class="nav-left">
+      <span class="logo-sm">📈 NIFTY Algo</span>
+      <span id="nav-nifty-price" class="price-badge">NIFTY —</span>
+    </div>
+    <div class="nav-right">
+      <span id="kite-status-badge" class="badge badge-disconnected">Kite: Not Connected</span>
+      <span id="strategy-badge" class="badge badge-idle">Strategy: IDLE</span>
+      <button class="btn btn-sm btn-danger" onclick="logout()">Logout</button>
+    </div>
+  </nav>
+
+  <!-- KITE CONNECT BANNER (shown when not connected) -->
+  <div id="kite-banner" class="kite-banner">
+    <span>⚠️ Connect Kite to fetch live instruments and start live trading.</span>
+    <div class="banner-actions">
+      <button class="btn btn-warning" onclick="connectKite()">Connect Kite</button>
+      <span style="color:#888;font-size:12px;">OR</span>
+      <input type="text" id="manual-token" placeholder="Paste Access Token" class="input-sm"/>
+      <button class="btn btn-sm btn-outline" onclick="setManualToken()">Set Token</button>
+    </div>
+  </div>
+
+  <div class="main-grid">
+
+    <!-- LEFT: CONFIGURATION PANEL -->
+    <section class="panel" id="config-panel">
+      <h3 class="panel-title">Pre-Market Configuration</h3>
+
+      <div class="form-row">
+        <div class="form-group">
+          <label>Futures Instrument</label>
+          <select id="cfg-futures" onchange="onFuturesChange()">
+            <option>Select Futures...</option>
+<!--            <option value="NIFTY25APRFUT">NIFTY25APRFUT</option>-->
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Trade Mode</label>
+          <select id="cfg-trade-mode">
+            <option value="PAPER">📄 Paper Trading</option>
+            <option value="LIVE">🔴 Live Trading</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="form-row">
+        <div class="form-group">
+          <label>Strike Mode</label>
+          <select id="cfg-strike-mode" onchange="onStrikeModeChange()">
+            <option value="AUTO_ATM">Auto ATM</option>
+            <option value="MANUAL">Manual Strike</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Expiry</label>
+          <select id="cfg-expiry">
+            <option value="CURRENT_WEEK">Current Week</option>
+            <option value="NEXT_WEEK">Next Week</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- MANUAL STRIKE SELECTION (hidden in AUTO mode) -->
+      <div id="manual-strike-section" style="display:none">
+        <div class="form-row">
+          <div class="form-group">
+            <label>CE Strike</label>
+            <select id="cfg-ce-strike">
+              <option>Loading...</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>PE Strike</label>
+            <select id="cfg-pe-strike">
+              <option>Loading...</option>
+            </select>
+          </div>
+        </div>
+        <div style="text-align:right;margin-bottom:8px;">
+          <button class="btn btn-sm btn-outline" onclick="loadOptionChain()">🔄 Refresh Chain</button>
+        </div>
+      </div>
+
+      <div class="form-row">
+        <div class="form-group">
+          <label>Start Candle Time
+            <span id="start-time-hint" style="font-size:11px;color:#f59e0b;margin-left:4px;">(future minute only)</span>
+          </label>
+          <!-- Options populated dynamically by populateStartTimes() in app.js -->
+          <select id="cfg-start-time" onfocus="populateStartTimes()" onclick="populateStartTimes()"></select>
+        </div>
+        <div class="form-group">
+          <label>Lot Quantity</label>
+          <input type="number" id="cfg-lot-qty" value="1" min="1"/>
+        </div>
+      </div>
+
+      <div class="form-row">
+        <div class="form-group">
+          <label>Lot Size</label>
+          <input type="number" id="cfg-lot-size" value="75" min="1"/>
+        </div>
+        <div class="form-group">
+          <label>Max Reversals</label>
+          <input type="number" id="cfg-max-reversals" value="3" min="0"/>
+        </div>
+      </div>
+
+      <div class="form-row">
+        <div class="form-group">
+          <label>Target Profit (₹)</label>
+          <input type="number" id="cfg-target" value="5000" min="1"/>
+        </div>
+        <div class="form-group">
+          <label>Stop Loss (₹)</label>
+          <input type="number" id="cfg-sl" value="2000" min="1"/>
+        </div>
+      </div>
+
+      <div class="form-row">
+        <div class="form-group">
+          <label>Trailing Profit Step (₹)
+            <span style="font-size:11px;color:#94a3b8;display:block;">
+              0 = off. Once target hit, exit when PnL drops this much from peak.
+            </span>
+          </label>
+          <input type="number" id="cfg-trailing" value="0" min="0" placeholder="0 = disabled"/>
+        </div>
+        <div class="form-group" style="display:flex;align-items:center;padding-top:20px;">
+          <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:500;">
+            <input type="checkbox" id="cfg-eod" style="width:16px;height:16px;cursor:pointer;"/>
+            Auto square-off at 15:29 (EOD)
+          </label>
+        </div>
+      </div>
+
+      <button class="btn btn-primary btn-full" onclick="saveConfig()">💾 Save Configuration</button>
+      <div id="config-msg" class="msg-box hidden"></div>
+    </section>
+
+    <!-- CENTER: STRATEGY CONTROL + STATUS -->
+    <section class="panel" id="strategy-panel">
+      <h3 class="panel-title">Strategy Control</h3>
+
+      <div class="strategy-controls">
+        <button id="btn-start" class="btn btn-success btn-lg" onclick="startStrategy()">▶ Start Strategy</button>
+        <button id="btn-stop" class="btn btn-danger btn-lg" onclick="stopStrategy()" disabled>⏹ Stop Strategy</button>
+      </div>
+
+      <!-- LIVE NIFTY PRICES -->
+      <div class="price-grid">
+        <div class="price-card">
+          <div class="price-label" id="futures-label">NIFTY FUT</div>
+          <div class="price-value" id="price-futures">—</div>
+        </div>
+        <div class="price-card ce-card">
+          <div class="price-label" id="ce-label">CE</div>
+          <div class="price-value" id="price-ce">—</div>
+        </div>
+        <div class="price-card pe-card">
+          <div class="price-label" id="pe-label">PE</div>
+          <div class="price-value" id="price-pe">—</div>
+        </div>
+      </div>
+
+      <!-- SESSION STATUS -->
+      <div class="status-section">
+        <div class="status-row">
+          <span class="status-label">State</span>
+          <span id="s-state" class="status-value badge badge-idle">IDLE</span>
+        </div>
+        <div class="status-row">
+          <span class="status-label">Reversals</span>
+          <span id="s-reversals" class="status-value">0 / 0</span>
+        </div>
+        <div class="status-row">
+          <span class="status-label">Entry Direction</span>
+          <span id="s-direction" class="status-value">—</span>
+        </div>
+        <div class="status-row">
+          <span class="status-label">Locked CE</span>
+          <span id="s-locked-ce" class="status-value monospace">—</span>
+        </div>
+        <div class="status-row">
+          <span class="status-label">Locked PE</span>
+          <span id="s-locked-pe" class="status-value monospace">—</span>
+        </div>
+      </div>
+
+      <!-- CANDLE INFO -->
+      <div class="candle-section">
+        <h4>Candle Closes</h4>
+        <div class="candle-row">
+          <div class="candle-box" id="candle1">
+            <div class="c-label">1st Candle</div>
+            <div class="c-value" id="c1-close">—</div>
+            <div class="c-time" id="c1-time"></div>
+          </div>
+          <div class="candle-box" id="candle2">
+            <div class="c-label">2nd Candle</div>
+            <div class="c-value" id="c2-close">—</div>
+            <div class="c-time" id="c2-time"></div>
+          </div>
+          <div class="candle-box active" id="candle3">
+            <div class="c-label">3rd Candle (Entry)</div>
+            <div class="c-value" id="c3-close">—</div>
+            <div class="c-time" id="c3-time"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- STOP REASON -->
+      <div id="stop-reason-box" class="stop-reason hidden">
+        <strong>Stop Reason:</strong> <span id="stop-reason-text"></span>
+      </div>
+    </section>
+
+    <!-- RIGHT: P&L + TRADE LEGS -->
+    <section class="panel" id="pnl-panel">
+      <h3 class="panel-title">P&amp;L Summary</h3>
+
+      <div class="pnl-grid">
+        <div class="pnl-card">
+          <div class="pnl-label">Realized P&L</div>
+          <div id="pnl-realized" class="pnl-value">₹0.00</div>
+        </div>
+        <div class="pnl-card">
+          <div class="pnl-label">Open P&L</div>
+          <div id="pnl-open" class="pnl-value">₹0.00</div>
+        </div>
+        <div class="pnl-card pnl-total-card">
+          <div class="pnl-label">Total P&L</div>
+          <div id="pnl-total" class="pnl-value pnl-total">₹0.00</div>
+        </div>
+        <div class="pnl-card">
+          <div class="pnl-label">Target</div>
+          <div id="pnl-target" class="pnl-value pnl-target">₹—</div>
+        </div>
+        <div class="pnl-card">
+          <div class="pnl-label">Stop Loss</div>
+          <div id="pnl-sl" class="pnl-value pnl-sl">₹—</div>
+        </div>
+      </div>
+
+      <!-- PROGRESS BAR -->
+      <div class="progress-section">
+        <div class="progress-bar-wrap">
+          <div id="pnl-bar" class="progress-bar"></div>
+        </div>
+        <div class="progress-labels">
+          <span id="sl-label" class="sl-label">SL</span>
+          <span>0</span>
+          <span id="target-label" class="target-label">Target</span>
+        </div>
+      </div>
+
+      <!-- TRAILING PROFIT STATUS (hidden when disabled) -->
+      <div id="trailing-status-box" class="hidden"
+           style="margin-top:10px;padding:10px 14px;border-radius:8px;
+                  background:rgba(245,158,11,0.08);border:1px solid rgba(245,158,11,0.25);
+                  display:flex;align-items:center;gap:20px;flex-wrap:wrap;">
+        <span id="trailing-status-label" style="font-weight:600;font-size:13px;">⏳ Waiting for Target</span>
+        <span style="font-size:12px;color:var(--muted);">
+          Peak: <strong id="trailing-watermark">—</strong>
+        </span>
+        <span style="font-size:12px;color:var(--muted);">
+          Exit if PnL ≤ <strong id="trailing-exit-level">—</strong>
+        </span>
+      </div>
+
+      <h4 style="margin-top:20px;margin-bottom:8px;">Trade Legs</h4>
+      <div class="table-wrap">
+        <table class="trade-table" id="legs-table">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Type</th>
+              <th>Entry</th>
+              <th>Exit</th>
+              <th>P&L</th>
+              <th>Reason</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody id="legs-body">
+            <tr><td colspan="7" class="empty-row">No trades yet</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+  </div><!-- end main-grid -->
+
+  <!-- FOOTER STATUS BAR -->
+  <footer class="status-bar">
+    <span id="footer-mode">Mode: PAPER</span>
+    <span id="footer-time">—</span>
+    <span id="footer-ws">WS: Disconnected</span>
+  </footer>
+
+</div><!-- end dashboard -->
+
+<script src="/js/app.js"></script>
+</body>
+</html>

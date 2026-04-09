@@ -1,0 +1,15 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "algo-trading",
+      "runtimeExecutable": "java",
+      "runtimeArgs": [
+        "-DJAVA_HOME=C:\\Program Files\\Eclipse Adoptium\\jdk-17.0.15.6-hotspot",
+        "-jar",
+        "target/algo-trading-backend-1.0.0.jar"
+      ],
+      "port": 8081
+    }
+  ]
+}

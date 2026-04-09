@@ -1,0 +1,34 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: algo-trading-backend
+  jackson:
+    serialization:
+      write-dates-as-timestamps: false
+    time-zone: Asia/Kolkata
+
+app:
+  jwt:
+    secret: "AlgoTradingSecretKey2024@#$%AlgoTradingSecretKey2024@#$%AlgoTradingSecretKey"
+    expiration-ms: 86400000  # 24 hours
+  credentials:
+    username: admin
+    password: admin123
+  trading:
+    market-open: "09:15"
+    market-close: "15:30"
+
+kite:
+  api-key: aykvxt41g0ppgtu2
+  api-secret: qw7ymyy044a4nb6c3yf6h3ncd7955l1u
+  access-token: ${KITE_ACCESS_TOKEN:}
+  redirect-url: ${KITE_REDIRECT_URL:http://localhost:8080/api/kite/callback}
+  base-url: https://api.kite.trade
+  login-url: https://kite.zerodha.com/connect/login
+
+logging:
+  level:
+    com.algotrading: DEBUG
+    org.springframework.security: WARN
