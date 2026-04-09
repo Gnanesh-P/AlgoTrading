@@ -1,0 +1,19 @@
+# Build output — never copy into image context (it's rebuilt inside Docker)
+target/
+
+# Version control
+.git/
+.gitignore
+
+# IDE / OS artefacts
+.idea/
+*.iml
+.DS_Store
+Thumbs.db
+
+# Local environment files (secrets must come from Render env vars, not files)
+.env
+*.env
+
+# Test reports (already skipped in build, no need in context)
+**/surefire-reports/

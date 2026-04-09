@@ -127,48 +127,58 @@ public class TradingStrategyService {
      *    before the first live tick arrives.
      */
     private void subscribeAndSeedAutoAtmOptions(TradeSession session) {
+        String ceSymbol = session.getLockedCeInstrument();
+        String peSymbol = session.getLockedPeInstrument();
+
+        // ── Step 1: token lookup for KiteTicker subscription ──────────────────
+        // KiteInstrument.lastPrice is ALWAYS 0 for options in Kite's instrument dump.
+        // We use findBySymbol only for the numeric token (needed for WebSocket subscription),
+        // NOT for the price.
         Map<Long, String> toSubscribe = new HashMap<>();
-
-        Optional<KiteInstrument> ceOpt = kiteInstrumentService.findBySymbol(session.getLockedCeInstrument());
-        Optional<KiteInstrument> peOpt = kiteInstrumentService.findBySymbol(session.getLockedPeInstrument());
-
-        ceOpt.ifPresent(inst -> {
-            toSubscribe.put(inst.getInstrumentToken(), inst.getTradingsymbol());
-            seedCacheIfCold(inst.getTradingsymbol(), inst.getLastPrice());
-        });
-        peOpt.ifPresent(inst -> {
-            toSubscribe.put(inst.getInstrumentToken(), inst.getTradingsymbol());
-            seedCacheIfCold(inst.getTradingsymbol(), inst.getLastPrice());
-        });
+        kiteInstrumentService.findBySymbol(ceSymbol)
+                .ifPresent(i -> toSubscribe.put(i.getInstrumentToken(), ceSymbol));
+        kiteInstrumentService.findBySymbol(peSymbol)
+                .ifPresent(i -> toSubscribe.put(i.getInstrumentToken(), peSymbol));
 
         if (!toSubscribe.isEmpty()) {
             kiteTickerService.subscribe(toSubscribe);
             log.info("AUTO_ATM: subscribed CE/PE to KiteTicker — {}", toSubscribe.values());
         } else {
-            log.warn("AUTO_ATM: could not find instrument tokens for CE={} PE={} — " +
-                     "LTP data may be unavailable (Kite instrument cache empty?)",
-                    session.getLockedCeInstrument(), session.getLockedPeInstrument());
+            log.warn("AUTO_ATM: instrument tokens not found for CE={} PE={} " +
+                     "(instrument cache empty or symbol mismatch). " +
+                     "KiteTicker will not push ticks; falling back to REST LTP only.",
+                    ceSymbol, peSymbol);
         }
+
+        // ── Step 2: seed cache via live REST LTP ──────────────────────────────
+        // We call kiteConnect.getLTP() (HTTP) instead of using inst.lastPrice because
+        // Kite's instrument dump has lastPrice=0 for all option instruments.
+        // This gives us a real market price to use as the entry price immediately,
+        // before the first KiteTicker tick arrives.
+        seedCacheViaRestLtp(ceSymbol);
+        seedCacheViaRestLtp(peSymbol);
     }
 
     /**
-     * Seeds the MarketDataCache with a price only when it has no existing entry
-     * (cache is "cold"). This provides an initial approximation (Kite prev-close)
-     * until a real live tick arrives and overwrites it.
+     * Fetches live LTP via Kite REST API and writes it into the MarketDataCache.
+     * Only seeds when the cache is currently cold (no existing tick for this instrument).
+     * Once KiteTicker ticks arrive they will naturally overwrite with fresher prices.
      */
-    private void seedCacheIfCold(String instrument, double seedPrice) {
-        if (cache.getLastPrice(instrument) <= 0) {
-            if (seedPrice > 0) {
-                MarketTick seed = MarketTick.builder()
-                        .instrument(instrument)
-                        .lastPrice(seedPrice)
-                        .timestamp(LocalDateTime.now())
-                        .build();
-                cache.updateTick(seed);
-                log.info("AUTO_ATM: seeded cache for {} with prev-close={}", instrument, seedPrice);
-            } else {
-                log.warn("AUTO_ATM: no seed price available for {} (instrument dump lastPrice=0)", instrument);
-            }
+    private void seedCacheViaRestLtp(String instrument) {
+        if (cache.getLastPrice(instrument) > 0) return; // already warm — skip
+
+        double ltp = kiteInstrumentService.fetchCurrentLtp(instrument);
+        if (ltp > 0) {
+            MarketTick seed = MarketTick.builder()
+                    .instrument(instrument)
+                    .lastPrice(ltp)
+                    .timestamp(LocalDateTime.now())
+                    .build();
+            cache.updateTick(seed);
+            log.info("AUTO_ATM: seeded cache for {} via REST LTP = {}", instrument, ltp);
+        } else {
+            log.warn("AUTO_ATM: REST LTP also returned 0 for {} " +
+                     "(Kite disconnected or market closed?). Entry guard will abort if still 0.", instrument);
         }
     }
 

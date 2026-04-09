@@ -1,5 +1,6 @@
 server:
-  port: 8080
+  # Render injects the PORT env var at runtime. Falls back to 8080 locally.
+  port: ${PORT:8080}
 
 spring:
   application:
@@ -11,21 +12,27 @@ spring:
 
 app:
   jwt:
-    secret: "AlgoTradingSecretKey2024@#$%AlgoTradingSecretKey2024@#$%AlgoTradingSecretKey"
-    expiration-ms: 86400000  # 24 hours
+    # !! Set JWT_SECRET in Render env vars — must be >= 64 chars for HS512 !!
+    secret: ${JWT_SECRET:AlgoTradingSecretKey2024@#$%AlgoTradingSecretKey2024@#$%AlgoTradingSecretKey}
+    expiration-ms: ${JWT_EXPIRY_MS:86400000}   # 24 hours default
   credentials:
-    username: admin
-    password: admin123
+    # Override APP_USERNAME / APP_PASSWORD in Render env vars for production
+    username: ${APP_USERNAME:admin}
+    password: ${APP_PASSWORD:admin123}
   trading:
     market-open: "09:15"
     market-close: "15:30"
 
 kite:
-  api-key: aykvxt41g0ppgtu2
-  api-secret: qw7ymyy044a4nb6c3yf6h3ncd7955l1u
+  # Set KITE_API_KEY and KITE_API_SECRET in Render env vars
+  api-key:    ${KITE_API_KEY:aykvxt41g0ppgtu2}
+  api-secret: ${KITE_API_SECRET:qw7ymyy044a4nb6c3yf6h3ncd7955l1u}
+  # KITE_ACCESS_TOKEN is set after each daily login (update in Render or via /api/kite/callback)
   access-token: ${KITE_ACCESS_TOKEN:}
+  # KITE_REDIRECT_URL must be your Render service URL, e.g.:
+  #   https://your-service-name.onrender.com/api/kite/callback
   redirect-url: ${KITE_REDIRECT_URL:http://localhost:8080/api/kite/callback}
-  base-url: https://api.kite.trade
+  base-url:  https://api.kite.trade
   login-url: https://kite.zerodha.com/connect/login
 
 logging:

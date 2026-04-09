@@ -132,12 +132,42 @@ public class KiteInstrumentService {
     }
 
     /**
-     * Find instrument by trading symbol.
+     * Find instrument by trading symbol (ensures cache is loaded first).
      */
     public Optional<KiteInstrument> findBySymbol(String tradingsymbol) {
+        ensureCacheLoaded();
         return instrumentCache.stream()
                 .filter(i -> tradingsymbol.equals(i.getTradingsymbol()))
                 .findFirst();
+    }
+
+    /**
+     * Fetch the current live LTP for an NFO instrument via Kite REST API.
+     *
+     * NOTE: Do NOT use KiteInstrument.lastPrice for options — Kite's instrument
+     * dump carries lastPrice=0 for all option instruments (only populated for
+     * equities and futures). This method calls the live LTP endpoint instead.
+     *
+     * Returns 0 if Kite is not connected or the call fails.
+     */
+    public double fetchCurrentLtp(String tradingsymbol) {
+        if (!kite.isConnected()) {
+            log.warn("Kite not connected — cannot fetch live LTP for {}", tradingsymbol);
+            return 0;
+        }
+        try {
+            String key = "NFO:" + tradingsymbol;
+            Map<String, com.zerodhatech.models.LTPQuote> ltpMap =
+                    kiteConnect.getLTP(new String[]{key});
+            if (ltpMap == null) return 0;
+            com.zerodhatech.models.LTPQuote quote = ltpMap.get(key);
+            double price = quote != null ? quote.lastPrice : 0;
+            log.info("Live LTP for {} = {}", tradingsymbol, price);
+            return price;
+        } catch (Exception | KiteException e) {
+            log.warn("Live LTP fetch failed for {}: {}", tradingsymbol, e.getMessage());
+            return 0;
+        }
     }
 
     // ---- Private helpers ----
