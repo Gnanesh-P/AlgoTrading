@@ -1,6 +1,6 @@
 package com.algotrading.backend.security;
 
-import org.springframework.beans.factory.annotation.Value;
+import com.algotrading.backend.config.AppCredentialsProperties;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.userdetails.User;
 import org.springframework.security.core.userdetails.UserDetails;
@@ -11,27 +11,38 @@ import org.springframework.stereotype.Service;
 
 import java.util.List;
 
+/**
+ * Loads user details from the {@code app.credentials.users[]} list in application.yml.
+ * Supports up to 4 users sharing a single Zerodha account:
+ *   APP_USERNAME / APP_PASSWORD  — user 1 (original admin)
+ *   APP_USER2    / APP_PASS2     — user 2
+ *   APP_USER3    / APP_PASS3     — user 3
+ *   APP_USER4    / APP_PASS4     — user 4
+ *
+ * Entries with a blank username are silently skipped.
+ */
 @Service
 public class CustomUserDetailsService implements UserDetailsService {
 
-    @Value("${app.credentials.username}")
-    private String username;
-
-    @Value("${app.credentials.password}")
-    private String password;
-
+    private final AppCredentialsProperties credentials;
     private final PasswordEncoder passwordEncoder;
 
-    public CustomUserDetailsService(PasswordEncoder passwordEncoder) {
+    public CustomUserDetailsService(AppCredentialsProperties credentials,
+                                    PasswordEncoder passwordEncoder) {
+        this.credentials    = credentials;
         this.passwordEncoder = passwordEncoder;
     }
 
     @Override
     public UserDetails loadUserByUsername(String requestedUsername) throws UsernameNotFoundException {
-        if (!username.equals(requestedUsername)) {
-            throw new UsernameNotFoundException("User not found: " + requestedUsername);
-        }
-        return new User(username, passwordEncoder.encode(password),
-                List.of(new SimpleGrantedAuthority("ROLE_TRADER")));
+        return credentials.getUsers().stream()
+                .filter(AppCredentialsProperties.UserEntry::isValid)
+                .filter(u -> u.getUsername().equals(requestedUsername))
+                .findFirst()
+                .map(u -> new User(
+                        u.getUsername(),
+                        passwordEncoder.encode(u.getPassword()),
+                        List.of(new SimpleGrantedAuthority("ROLE_TRADER"))))
+                .orElseThrow(() -> new UsernameNotFoundException("User not found: " + requestedUsername));
     }
 }

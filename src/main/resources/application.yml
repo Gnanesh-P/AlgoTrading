@@ -16,9 +16,17 @@ app:
     secret: ${JWT_SECRET:AlgoTradingSecretKey2024@#$%AlgoTradingSecretKey2024@#$%AlgoTradingSecretKey}
     expiration-ms: ${JWT_EXPIRY_MS:86400000}   # 24 hours default
   credentials:
-    # Override APP_USERNAME / APP_PASSWORD in Render env vars for production
-    username: ${APP_USERNAME:admin}
-    password: ${APP_PASSWORD:admin123}
+    # Up to 4 users sharing one Zerodha account.
+    # Override with Render/Docker env vars. Entries with a blank username are ignored.
+    users:
+      - username: ${APP_USERNAME:admin}
+        password: ${APP_PASSWORD:admin123}
+      - username: ${APP_USER2:}
+        password: ${APP_PASS2:}
+      - username: ${APP_USER3:}
+        password: ${APP_PASS3:}
+      - username: ${APP_USER4:}
+        password: ${APP_PASS4:}
   trading:
     market-open: "09:15"
     market-close: "15:30"

@@ -15,6 +15,7 @@ import java.util.List;
 public class AlgoStatusResponse {
     private boolean active;
     private String  status;                 // RUNNING | WAITING | TARGET_HIT | SL_HIT | STOPPED
+    private String  startedBy;             // username of the user who started this session
     private String  currentPosition;        // CE | PE
     private Double  currentEntryPrice;
     private Double  currentOptionPrice;

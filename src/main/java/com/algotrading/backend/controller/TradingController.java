@@ -9,6 +9,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import java.security.Principal;
 import java.util.List;
 import java.util.stream.Collectors;
 
@@ -22,8 +23,9 @@ public class TradingController {
 
     /** Start the trading strategy */
     @PostMapping("/start")
-    public ResponseEntity<TradeSessionResponse> startStrategy() {
-        TradeSession session = strategyService.startStrategy();
+    public ResponseEntity<TradeSessionResponse> startStrategy(Principal principal) {
+        String startedBy = principal != null ? principal.getName() : "unknown";
+        TradeSession session = strategyService.startStrategy(startedBy);
         return ResponseEntity.ok(toResponse(session));
     }
 

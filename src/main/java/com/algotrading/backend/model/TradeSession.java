@@ -51,6 +51,9 @@ public class TradeSession {
     private boolean trailingActive;          // true once targetProfit is first breached
     private double  trailingHighWatermark;   // running max PnL since trailing activated
 
+    // Session ownership — set to the JWT username of whoever clicked Start
+    private String startedBy;
+
     // Session timestamps
     private LocalDateTime startTime;
     private LocalDateTime endTime;

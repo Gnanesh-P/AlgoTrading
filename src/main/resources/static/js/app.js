@@ -108,6 +108,7 @@ async function login() {
     const res = await post('/api/auth/login', { username, password }, false);
     token = res.token;
     localStorage.setItem('jwtToken', token);
+    localStorage.setItem('jwtUsername', username);   // stored for "started by" comparison
     showDashboard();
     init();
   } catch (e) {
@@ -119,6 +120,7 @@ async function login() {
 function logout() {
   token = '';
   localStorage.removeItem('jwtToken');
+  localStorage.removeItem('jwtUsername');
   if (wsClient)     wsClient.close();
   if (pricePoller)  clearInterval(pricePoller);
   if (statusPoller) clearInterval(statusPoller);
@@ -370,7 +372,13 @@ async function startStrategy() {
     document.getElementById('btn-stop').disabled  = false;
     fetchAndRenderStatus();
   } catch (e) {
-    showMsg('config-msg', '❌ ' + (e.message || 'Start failed'), 'error');
+    const msg = e.message || 'Start failed';
+    // 409 = another user's session is already running
+    const isConflict = msg.includes('409') || msg.toLowerCase().includes('already running');
+    showMsg('config-msg',
+      isConflict ? '⚠️ ' + msg : '❌ ' + msg,
+      isConflict ? 'info' : 'error');
+    if (isConflict) fetchAndRenderStatus(); // refresh to show who owns the session
   }
 }
 
@@ -423,6 +431,16 @@ function renderSession(s) {
   const stateEl = document.getElementById('s-state');
   stateEl.textContent = status;
   stateEl.className   = 'status-value badge badge-' + status.toLowerCase().replace(/_/g, '');
+
+  // ---- Started by ----
+  const startedByEl = document.getElementById('s-started-by');
+  if (startedByEl) {
+    startedByEl.textContent = s.startedBy || '—';
+    // Highlight when someone else's session is running (compare against logged-in user)
+    const me = localStorage.getItem('jwtUsername') || '';
+    startedByEl.style.color = (s.startedBy && me && s.startedBy !== me)
+      ? 'var(--warning, #f59e0b)' : 'inherit';
+  }
 
   // ---- Reversals ----
   document.getElementById('s-reversals').textContent =
@@ -683,8 +701,12 @@ async function post(url, body, needAuth = true) {
   if (needAuth && token) headers['Authorization'] = 'Bearer ' + token;
   const res = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body) });
   if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.message || 'Request failed');
+    // Prefer a plain-text body (e.g. 409 conflict message) over JSON error
+    const ct  = res.headers.get('content-type') || '';
+    const txt = ct.includes('application/json')
+      ? (await res.json().catch(() => ({}))).message
+      : await res.text().catch(() => '');
+    throw new Error(txt || ('HTTP ' + res.status));
   }
   // Some endpoints return plain string (e.g. /algo/start, /algo/stop)
   const ct = res.headers.get('content-type') || '';

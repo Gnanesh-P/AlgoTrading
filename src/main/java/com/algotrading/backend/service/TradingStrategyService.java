@@ -41,6 +41,7 @@ public class TradingStrategyService {
     private final OptionInstrumentService optionInstrumentService;
     private final KiteInstrumentService kiteInstrumentService;
     private final KiteTickerService kiteTickerService;
+    private final CandleAggregatorService candleAggregator;
     private final SimpMessagingTemplate messagingTemplate;
 
     /**
@@ -439,11 +440,22 @@ public class TradingStrategyService {
 
     /**
      * Start the trading strategy with the current configuration.
+     *
+     * @param startedBy JWT username of the user who clicked Start (for multi-user visibility)
      */
-    public TradeSession startStrategy() {
+    public TradeSession startStrategy(String startedBy) {
         TradingConfig config = cache.getConfig();
         if (config == null) {
             throw new IllegalStateException("Trading configuration not set. Configure before starting.");
+        }
+
+        // Reset the candle aggregator for the futures instrument so any partially-formed candle
+        // from a previous session (or from earlier ticks today) does not contaminate the new session.
+        // Without this reset a mid-day start may never see the 1st candle close if the aggregator
+        // already has a forming candle at the same minute boundary.
+        if (config.getFuturesInstrument() != null) {
+            candleAggregator.reset(config.getFuturesInstrument());
+            log.info("Candle aggregator reset for futures: {}", config.getFuturesInstrument());
         }
 
         TradeSession session = TradeSession.builder()
@@ -455,11 +467,12 @@ public class TradingStrategyService {
                 .currentLegNumber(0)
                 .cumulativePnL(0.0)
                 .openPnL(0.0)
+                .startedBy(startedBy)
                 .startTime(LocalDateTime.now())
                 .build();
 
         cache.setSession(session);
-        log.info("Strategy started. Session: {}", session.getSessionId());
+        log.info("Strategy started by [{}]. Session: {}", startedBy, session.getSessionId());
         return session;
     }
 
