@@ -1,0 +1,551 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Admin — NIFTY Algo</title>
+  <style>
+    :root {
+      --bg:      #0d1117; --surface: #161b22; --border: #30363d;
+      --text:    #e6edf3; --text2:  #8b949e;
+      --primary: #238636; --danger: #da3633; --warning: #d29922;
+      --info:    #1f6feb; --success: #3fb950; --radius: 8px;
+    }
+    * { box-sizing:border-box; margin:0; padding:0; }
+    body { background:var(--bg); color:var(--text); font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif; font-size:14px; }
+
+    /* Login */
+    #login-screen { display:flex; align-items:center; justify-content:center; min-height:100vh; }
+    .login-box { background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:40px; width:360px; }
+    .login-box h2 { margin-bottom:6px; font-size:20px; }
+    .login-logo { font-size:32px; margin-bottom:8px; }
+
+    /* Dashboard */
+    #dashboard { display:none; }
+    .topbar { background:var(--surface); border-bottom:1px solid var(--border); padding:12px 24px; display:flex; align-items:center; justify-content:space-between; }
+    .topbar h1 { font-size:16px; font-weight:600; }
+    .badge-admin { background:rgba(35,134,54,.25); color:var(--success); border:1px solid rgba(35,134,54,.5); padding:2px 10px; border-radius:20px; font-size:12px; font-weight:600; }
+
+    .main { max-width:1100px; margin:0 auto; padding:24px; }
+
+    .card { background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); padding:20px; margin-bottom:20px; }
+    .card-title { font-size:15px; margin-bottom:16px; padding-bottom:10px; border-bottom:1px solid var(--border); display:flex; align-items:center; justify-content:space-between; }
+
+    .table-wrap { overflow-x:auto; }
+    table { width:100%; border-collapse:collapse; }
+    th { text-align:left; padding:10px 12px; font-size:12px; font-weight:600; color:var(--text2); border-bottom:1px solid var(--border); text-transform:uppercase; letter-spacing:.5px; }
+    td { padding:10px 12px; border-bottom:1px solid rgba(48,54,61,.5); vertical-align:middle; }
+    tr:hover td { background:rgba(255,255,255,.02); }
+    .tag { display:inline-block; padding:2px 8px; border-radius:4px; font-size:11px; font-weight:600; }
+    .tag-admin   { background:rgba(31,111,235,.2); color:#58a6ff; }
+    .tag-trader  { background:rgba(63,185,80,.2);  color:var(--success); }
+    .tag-expired { background:rgba(218,54,51,.2);  color:#f85149; }
+    .tag-active  { background:rgba(63,185,80,.2);  color:var(--success); }
+    .tag-disabled{ background:rgba(139,148,158,.2);color:var(--text2); }
+
+    .form-grid { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+    .form-group { display:flex; flex-direction:column; gap:5px; }
+    .form-group label { font-size:12px; color:var(--text2); font-weight:500; }
+    .form-group input,.form-group select { background:var(--bg); border:1px solid var(--border); border-radius:6px; color:var(--text); padding:8px 10px; font-size:13px; outline:none; }
+    .form-group input:focus,.form-group select:focus { border-color:var(--info); }
+    .form-group.full { grid-column:1/-1; }
+    .hint { font-size:11px; color:var(--text2); margin-top:2px; }
+
+    .btn { border:none; border-radius:6px; padding:7px 14px; font-size:13px; font-weight:500; cursor:pointer; transition:opacity .15s; }
+    .btn:hover { opacity:.85; }
+    .btn-primary { background:var(--primary); color:#fff; }
+    .btn-danger  { background:var(--danger);  color:#fff; }
+    .btn-info    { background:var(--info);    color:#fff; }
+    .btn-outline { background:transparent; border:1px solid var(--border); color:var(--text); text-decoration:none; display:inline-block; }
+    .btn-sm { padding:4px 10px; font-size:12px; }
+    .btn-full { width:100%; padding:10px; }
+
+    .msg { padding:10px 14px; border-radius:6px; margin-top:10px; font-size:13px; }
+    .msg-success { background:rgba(63,185,80,.15); border:1px solid rgba(63,185,80,.3); color:var(--success); }
+    .msg-error   { background:rgba(218,54,51,.15); border:1px solid rgba(218,54,51,.3); color:#f85149; }
+    .msg-info    { background:rgba(31,111,235,.15); border:1px solid rgba(31,111,235,.3); color:#58a6ff; }
+    .error-msg   { color:#f85149; font-size:13px; margin-top:8px; }
+    .hidden { display:none!important; }
+
+    .modal-backdrop { display:none; position:fixed; inset:0; background:rgba(0,0,0,.65); z-index:100; align-items:center; justify-content:center; }
+    .modal-backdrop.open { display:flex; }
+    .modal { background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:24px; width:540px; max-height:90vh; overflow-y:auto; }
+    .modal h3 { margin-bottom:16px; }
+    .modal-footer { display:flex; gap:10px; justify-content:flex-end; margin-top:16px; }
+
+    .stats-row { display:grid; grid-template-columns:repeat(4,1fr); gap:16px; margin-bottom:20px; }
+    .stat-card { background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); padding:16px; }
+    .stat-label { font-size:12px; color:var(--text2); margin-bottom:4px; }
+    .stat-val { font-size:26px; font-weight:700; }
+
+    input,select { color-scheme:dark; }
+  </style>
+</head>
+<body>
+
+<!-- ── LOGIN ───────────────────────────────────────────── -->
+<div id="login-screen">
+  <div class="login-box">
+    <div class="login-logo">🔐</div>
+    <h2>Admin Panel</h2>
+    <p style="color:var(--text2);font-size:13px;margin-bottom:20px;">NIFTY Algo — Subscriber Management</p>
+    <div class="form-group" style="margin-bottom:12px;">
+      <label>Username</label>
+      <input type="text" id="a-username" placeholder="admin" value="admin"/>
+    </div>
+    <div class="form-group" style="margin-bottom:16px;">
+      <label>Password</label>
+      <input type="password" id="a-password" placeholder="••••••••"
+             onkeydown="if(event.key==='Enter')adminLogin()"/>
+    </div>
+    <button class="btn btn-primary btn-full" onclick="adminLogin()">Login as Admin</button>
+    <div id="login-err" class="error-msg hidden"></div>
+  </div>
+</div>
+
+<!-- ── DASHBOARD ───────────────────────────────────────── -->
+<div id="dashboard">
+  <div class="topbar">
+    <div style="display:flex;align-items:center;gap:12px;">
+      <span style="font-size:20px;">📈</span>
+      <h1>NIFTY Algo — Admin Panel</h1>
+      <span class="badge-admin">ADMIN</span>
+    </div>
+    <div style="display:flex;gap:10px;align-items:center;">
+      <span id="admin-user-label" style="color:var(--text2);font-size:13px;"></span>
+      <a href="/" class="btn btn-outline btn-sm">← Trading UI</a>
+      <button class="btn btn-outline btn-sm" onclick="adminLogout()">Logout</button>
+    </div>
+  </div>
+
+  <div class="main">
+
+    <!-- Stats -->
+    <div class="stats-row">
+      <div class="stat-card">
+        <div class="stat-label">Total Subscribers</div>
+        <div class="stat-val" id="st-total">—</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Active Plans</div>
+        <div class="stat-val" id="st-active" style="color:var(--success);">—</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Expired / Disabled</div>
+        <div class="stat-val" id="st-expired" style="color:#f85149;">—</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Kite Token Set</div>
+        <div class="stat-val" id="st-kite" style="color:var(--warning);">—</div>
+      </div>
+    </div>
+
+    <!-- Live Sessions -->
+    <div class="card">
+      <div class="card-title">
+        <span>🔴 Live Trading Sessions</span>
+        <button class="btn btn-outline btn-sm" onclick="loadSessions()">🔄 Refresh</button>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>User</th><th>Session ID</th><th>Mode</th><th>State</th><th>PnL</th><th>Started</th><th>Action</th></tr>
+          </thead>
+          <tbody id="sessions-tbody">
+            <tr><td colspan="7" style="color:var(--text2);text-align:center;padding:20px;">Loading...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- User Table -->
+    <div class="card">
+      <div class="card-title">
+        <span>Subscribers</span>
+        <div style="display:flex;gap:8px;">
+          <button class="btn btn-outline btn-sm" onclick="loadUsers()">🔄 Refresh</button>
+          <button class="btn btn-primary btn-sm" onclick="openAddModal()">+ Add Subscriber</button>
+        </div>
+      </div>
+      <div id="global-msg"></div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Username</th><th>Role</th><th>Plan Expires</th><th>Status</th>
+              <th>Max Lots</th><th>Kite</th><th>Notes</th><th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="users-tbody">
+            <tr><td colspan="8" style="color:var(--text2);text-align:center;padding:30px;">Loading...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- ── ADD MODAL ────────────────────────────────────────── -->
+<div class="modal-backdrop" id="add-modal">
+  <div class="modal">
+    <h3>➕ Add Subscriber</h3>
+    <div class="form-grid">
+      <div class="form-group">
+        <label>Username *</label>
+        <input id="add-username" placeholder="e.g. rahul"/>
+      </div>
+      <div class="form-group">
+        <label>Password *</label>
+        <input type="password" id="add-password" placeholder="min 6 chars"/>
+      </div>
+      <div class="form-group">
+        <label>Role</label>
+        <select id="add-role"><option value="TRADER">TRADER</option><option value="ADMIN">ADMIN</option></select>
+      </div>
+      <div class="form-group">
+        <label>Max Lots Allowed</label>
+        <input type="number" id="add-lots" value="1" min="1"/>
+        <span class="hint">1 lot = 65 qty (NIFTY fixed)</span>
+      </div>
+      <div class="form-group">
+        <label>Plan Expiry Date *</label>
+        <input type="date" id="add-expiry"/>
+      </div>
+      <div class="form-group">
+        <label>Kite API Key</label>
+        <input id="add-kite-key" placeholder="From Kite Developer Console"/>
+      </div>
+      <div class="form-group">
+        <label>Kite API Secret</label>
+        <input type="password" id="add-kite-secret" placeholder="From Kite Developer Console"/>
+      </div>
+      <div class="form-group">
+        <label>Kite Redirect URL</label>
+        <input id="add-kite-redirect" placeholder="https://yourapp.onrender.com/api/kite/callback"/>
+      </div>
+      <div class="form-group full">
+        <label>Notes (internal)</label>
+        <input id="add-notes" placeholder="e.g. Paid ₹2000 for 3 months — April 2025"/>
+      </div>
+    </div>
+    <div id="add-msg"></div>
+    <div class="modal-footer">
+      <button class="btn btn-outline" onclick="closeModal('add-modal')">Cancel</button>
+      <button class="btn btn-primary" onclick="submitAdd()">Create Subscriber</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── EDIT MODAL ───────────────────────────────────────── -->
+<div class="modal-backdrop" id="edit-modal">
+  <div class="modal">
+    <h3 id="edit-title">✏️ Edit Subscriber</h3>
+    <input type="hidden" id="edit-uname"/>
+    <div class="form-grid">
+      <div class="form-group">
+        <label>New Password <span style="color:var(--text2)">(blank = keep)</span></label>
+        <input type="password" id="edit-password" placeholder="leave blank = unchanged"/>
+      </div>
+      <div class="form-group">
+        <label>Role</label>
+        <select id="edit-role"><option value="TRADER">TRADER</option><option value="ADMIN">ADMIN</option></select>
+      </div>
+      <div class="form-group">
+        <label>Max Lots Allowed</label>
+        <input type="number" id="edit-lots" min="1"/>
+        <span class="hint">1 lot = 65 qty (NIFTY fixed)</span>
+      </div>
+      <div class="form-group">
+        <label>Plan Expiry Date</label>
+        <input type="date" id="edit-expiry"/>
+      </div>
+      <div class="form-group">
+        <label>Account Enabled</label>
+        <select id="edit-enabled">
+          <option value="true">✅ Yes — Active</option>
+          <option value="false">🚫 No — Disabled</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Kite API Key</label>
+        <input id="edit-kite-key"/>
+      </div>
+      <div class="form-group">
+        <label>Kite API Secret <span style="color:var(--text2)">(blank = keep)</span></label>
+        <input type="password" id="edit-kite-secret"/>
+      </div>
+      <div class="form-group full">
+        <label>Kite Access Token <span style="color:var(--text2)">(paste today's token after daily Kite login)</span></label>
+        <input id="edit-kite-token" placeholder="paste fresh access token here"/>
+        <span class="hint">This must be updated every trading day after the customer logs into Kite.</span>
+      </div>
+      <div class="form-group">
+        <label>Kite Redirect URL</label>
+        <input id="edit-kite-redirect"/>
+      </div>
+      <div class="form-group full">
+        <label>Notes</label>
+        <input id="edit-notes"/>
+      </div>
+    </div>
+    <div id="edit-msg"></div>
+    <div class="modal-footer">
+      <button class="btn btn-outline" onclick="closeModal('edit-modal')">Cancel</button>
+      <button class="btn btn-primary" onclick="submitEdit()">Save Changes</button>
+    </div>
+  </div>
+</div>
+
+<script>
+let adminToken = localStorage.getItem('adminJwt') || '';
+
+/* ── Auth ──────────────────────────────────────────────── */
+async function adminLogin() {
+  const u = document.getElementById('a-username').value.trim();
+  const p = document.getElementById('a-password').value;
+  const err = document.getElementById('login-err');
+  err.classList.add('hidden');
+  try {
+    const r = await fetch('/api/auth/login', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({username:u, password:p})
+    });
+    if (!r.ok) throw new Error('Invalid credentials');
+    const data = await r.json();
+    adminToken = data.token;
+    localStorage.setItem('adminJwt', adminToken);
+    localStorage.setItem('adminUser', u);
+    boot();
+  } catch(e) {
+    err.textContent = '❌ ' + e.message;
+    err.classList.remove('hidden');
+  }
+}
+function adminLogout() {
+  adminToken=''; localStorage.removeItem('adminJwt'); localStorage.removeItem('adminUser');
+  document.getElementById('dashboard').style.display='none';
+  document.getElementById('login-screen').style.display='flex';
+}
+function boot() {
+  document.getElementById('login-screen').style.display='none';
+  document.getElementById('dashboard').style.display='block';
+  document.getElementById('admin-user-label').textContent='👤 ' + (localStorage.getItem('adminUser')||'');
+  loadUsers();
+  loadSessions();
+}
+
+/* ── Live sessions ───────────────────────────────────────── */
+async function loadSessions() {
+  try {
+    const sessions = await apiGet('/algo/sessions');
+    const tbody = document.getElementById('sessions-tbody');
+    if (!sessions || sessions.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="7" style="color:var(--text2);text-align:center;padding:20px;">No active sessions</td></tr>';
+      return;
+    }
+    tbody.innerHTML = sessions.map(s => {
+      const pnl = s.totalPnL != null ? '₹' + Number(s.totalPnL).toFixed(0) : '—';
+      const pnlColor = (s.totalPnL||0) >= 0 ? 'var(--success)' : '#f85149';
+      const stateColor = s.state==='IN_POSITION'?'var(--success)': s.state==='WAITING_FOR_CANDLES'?'var(--warning)':'var(--text2)';
+      const started = s.startTime ? new Date(s.startTime).toLocaleTimeString() : '—';
+      return `<tr>
+        <td><strong>${s.username}</strong></td>
+        <td style="font-size:11px;color:var(--text2);">${(s.sessionId||'').substring(0,8)}…</td>
+        <td>${s.tradeMode||'—'}</td>
+        <td style="color:${stateColor};font-weight:600;">${s.state||'—'}</td>
+        <td style="color:${pnlColor};font-weight:600;">${pnl}</td>
+        <td>${started}</td>
+        <td>
+          <button class="btn btn-sm" style="background:var(--danger);color:#fff;"
+            onclick="adminForceStop('${s.username}')">Force Stop</button>
+        </td>
+      </tr>`;
+    }).join('');
+  } catch(e) {
+    document.getElementById('sessions-tbody').innerHTML =
+      '<tr><td colspan="7" style="color:var(--text2);text-align:center;">Error loading sessions</td></tr>';
+  }
+}
+
+async function adminForceStop(username) {
+  if (!confirm('Force-stop session for ' + username + '?')) return;
+  try {
+    await apiPost('/algo/admin/stop/' + username);
+    globalMsg('✅ Force-stopped session for ' + username, 'success');
+    loadSessions();
+  } catch(e) { globalMsg('❌ ' + e.message, 'error'); }
+}
+
+/* ── API helpers ────────────────────────────────────────── */
+async function apiFetch(method, url, body) {
+  const opts = { method, headers:{'Authorization':'Bearer '+adminToken} };
+  if (body) { opts.headers['Content-Type']='application/json'; opts.body=JSON.stringify(body); }
+  const r = await fetch(url, opts);
+  if (r.status===401||r.status===403) { adminLogout(); throw new Error('Session expired — please log in again'); }
+  const ct = r.headers.get('content-type')||'';
+  const txt = ct.includes('json') ? await r.json() : await r.text();
+  if (!r.ok) throw new Error(typeof txt==='string' ? txt : (txt.message||'Request failed'));
+  return txt;
+}
+const apiGet    = url       => apiFetch('GET',   url);
+const apiPost   = (url, b)  => apiFetch('POST',  url, b);
+const apiPut    = (url, b)  => apiFetch('PUT',   url, b);
+const apiDelete = url       => apiFetch('DELETE', url);
+
+/* ── Load & render users ────────────────────────────────── */
+async function loadUsers() {
+  try {
+    const users = await apiGet('/api/admin/users');
+    renderStats(users);
+    renderTable(users);
+  } catch(e) { globalMsg('❌ '+e.message, 'error'); }
+}
+
+function renderStats(users) {
+  document.getElementById('st-total').textContent   = users.length;
+  document.getElementById('st-active').textContent  = users.filter(u=>u.planActive&&u.enabled).length;
+  document.getElementById('st-expired').textContent = users.filter(u=>!u.planActive||!u.enabled).length;
+  document.getElementById('st-kite').textContent    = users.filter(u=>u.hasKiteToken).length;
+}
+
+function renderTable(users) {
+  if (!users.length) {
+    document.getElementById('users-tbody').innerHTML=
+      '<tr><td colspan="8" style="color:var(--text2);text-align:center;padding:30px;">No subscribers yet</td></tr>';
+    return;
+  }
+  document.getElementById('users-tbody').innerHTML = users.map(u => {
+    const roleTag   = u.role==='ADMIN'
+      ? '<span class="tag tag-admin">ADMIN</span>'
+      : '<span class="tag tag-trader">TRADER</span>';
+    const statusTag = !u.enabled
+      ? '<span class="tag tag-disabled">Disabled</span>'
+      : u.planActive
+        ? '<span class="tag tag-active">Active</span>'
+        : '<span class="tag tag-expired">Expired</span>';
+    const kite = u.hasKiteToken
+      ? '<span style="color:var(--success);font-size:12px;">✅ Set</span>'
+      : '<span style="color:var(--text2);font-size:12px;">— None</span>';
+    const notes = (u.notes||'—').substring(0,40) + ((u.notes||'').length>40?'…':'');
+    const expiry = u.planExpiryDate || '—';
+    const expClass = (!u.planActive && u.planExpiryDate) ? 'color:#f85149;' : '';
+    return `<tr>
+      <td style="font-weight:600;">${u.username}</td>
+      <td>${roleTag}</td>
+      <td style="font-size:12px;${expClass}">${expiry}</td>
+      <td>${statusTag}</td>
+      <td style="text-align:center;">${u.maxLotSize} <span style="font-size:11px;color:var(--text2);">(×65)</span></td>
+      <td>${kite}</td>
+      <td style="font-size:12px;color:var(--text2);" title="${u.notes||''}">${notes}</td>
+      <td>
+        <div style="display:flex;gap:5px;">
+          <button class="btn btn-info btn-sm" onclick="openEdit('${u.username}')">Edit</button>
+          <button class="btn btn-danger btn-sm" onclick="doDelete('${u.username}')">Delete</button>
+        </div>
+      </td>
+    </tr>`;
+  }).join('');
+}
+
+/* ── Add ───────────────────────────────────────────────── */
+function openAddModal() {
+  const d = new Date(); d.setMonth(d.getMonth()+1);
+  document.getElementById('add-expiry').value = d.toISOString().slice(0,10);
+  ['add-username','add-password','add-kite-key','add-kite-secret','add-notes'].forEach(id=>document.getElementById(id).value='');
+  document.getElementById('add-lots').value='1';
+  document.getElementById('add-role').value='TRADER';
+  document.getElementById('add-kite-redirect').value = window.location.origin+'/api/kite/callback';
+  document.getElementById('add-msg').innerHTML='';
+  document.getElementById('add-modal').classList.add('open');
+}
+async function submitAdd() {
+  const body = {
+    username:        val('add-username'),
+    password:        val('add-password'),
+    role:            val('add-role'),
+    maxLotSize:      parseInt(val('add-lots'))||1,
+    planExpiryDate:  val('add-expiry')||null,
+    kiteApiKey:      val('add-kite-key')||null,
+    kiteApiSecret:   val('add-kite-secret')||null,
+    kiteRedirectUrl: val('add-kite-redirect')||null,
+    notes:           val('add-notes')||null,
+  };
+  if (!body.username||!body.password) { showMsg('add-msg','❌ Username and password are required','error'); return; }
+  try {
+    await apiPost('/api/admin/users', body);
+    showMsg('add-msg','✅ Subscriber created!','success');
+    setTimeout(()=>{ closeModal('add-modal'); loadUsers(); }, 1100);
+  } catch(e) { showMsg('add-msg','❌ '+e.message,'error'); }
+}
+
+/* ── Edit ──────────────────────────────────────────────── */
+async function openEdit(username) {
+  document.getElementById('edit-msg').innerHTML='';
+  document.getElementById('edit-title').textContent='✏️ Edit — '+username;
+  document.getElementById('edit-uname').value=username;
+  ['edit-password','edit-kite-secret','edit-kite-token'].forEach(id=>document.getElementById(id).value='');
+  try {
+    const u = await apiGet('/api/admin/users/'+username);
+    document.getElementById('edit-role').value    = u.role||'TRADER';
+    document.getElementById('edit-lots').value    = u.maxLotSize||1;
+    document.getElementById('edit-expiry').value  = u.planExpiryDate||'';
+    document.getElementById('edit-enabled').value = String(u.enabled!==false);
+    document.getElementById('edit-kite-key').value= u.kiteApiKey||'';
+    document.getElementById('edit-kite-redirect').value = u.kiteRedirectUrl||'';
+    document.getElementById('edit-notes').value   = u.notes||'';
+  } catch(e) { showMsg('edit-msg','❌ Could not load user: '+e.message,'error'); }
+  document.getElementById('edit-modal').classList.add('open');
+}
+async function submitEdit() {
+  const username = document.getElementById('edit-uname').value;
+  const body = {
+    newPassword:     val('edit-password')||null,
+    role:            val('edit-role'),
+    maxLotSize:      parseInt(val('edit-lots'))||1,
+    planExpiryDate:  val('edit-expiry')||null,
+    enabled:         val('edit-enabled')==='true',
+    notes:           val('edit-notes')||null,
+    kiteApiKey:      val('edit-kite-key')||null,
+    kiteApiSecret:   val('edit-kite-secret')||null,
+    kiteAccessToken: val('edit-kite-token')||null,
+    kiteRedirectUrl: val('edit-kite-redirect')||null,
+  };
+  try {
+    await apiPut('/api/admin/users/'+username, body);
+    showMsg('edit-msg','✅ Saved!','success');
+    setTimeout(()=>{ closeModal('edit-modal'); loadUsers(); }, 1000);
+  } catch(e) { showMsg('edit-msg','❌ '+e.message,'error'); }
+}
+
+/* ── Delete ─────────────────────────────────────────────── */
+async function doDelete(username) {
+  if (!confirm('Delete subscriber "'+username+'"?\nThis cannot be undone.')) return;
+  try {
+    await apiDelete('/api/admin/users/'+username);
+    globalMsg('✅ Deleted: '+username,'success');
+    loadUsers();
+  } catch(e) { globalMsg('❌ '+e.message,'error'); }
+}
+
+/* ── Helpers ────────────────────────────────────────────── */
+function val(id) { return (document.getElementById(id)||{}).value||''; }
+function closeModal(id) { document.getElementById(id).classList.remove('open'); }
+function showMsg(elId, text, type) { document.getElementById(elId).innerHTML=`<div class="msg msg-${type}">${text}</div>`; }
+function globalMsg(text, type) {
+  showMsg('global-msg', text, type);
+  setTimeout(()=>{ document.getElementById('global-msg').innerHTML=''; }, 4000);
+}
+
+// Close modal on backdrop click
+document.querySelectorAll('.modal-backdrop').forEach(b=>{
+  b.addEventListener('click', e=>{ if(e.target===b) b.classList.remove('open'); });
+});
+
+/* ── Init ───────────────────────────────────────────────── */
+window.onload = () => {
+  if (adminToken) boot();
+};
+</script>
+</body>
+</html>

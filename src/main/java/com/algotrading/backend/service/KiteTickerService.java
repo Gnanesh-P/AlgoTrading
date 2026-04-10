@@ -10,6 +10,7 @@ import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -184,10 +185,26 @@ public class KiteTickerService {
                     continue;
                 }
                 double ltp = kiteTick.getLastTradedPrice();
+
+                // Use the EXCHANGE tick timestamp so candle boundaries align exactly
+                // with Zerodha's own candles.  Falling back to server clock only when
+                // the exchange time is missing (e.g. during pre-market or testing).
+                LocalDateTime tickTime;
+                try {
+                    tickTime = (kiteTick.getTickTimestamp() != null)
+                            ? kiteTick.getTickTimestamp()
+                                      .toInstant()
+                                      .atZone(ZoneId.of("Asia/Kolkata"))
+                                      .toLocalDateTime()
+                            : LocalDateTime.now();
+                } catch (Exception e) {
+                    tickTime = LocalDateTime.now();
+                }
+
                 MarketTick tick = MarketTick.builder()
                         .instrument(symbol)
                         .lastPrice(ltp)
-                        .timestamp(LocalDateTime.now())
+                        .timestamp(tickTime)
                         .build();
                 marketDataService.processTick(tick);
             } catch (Exception e) {

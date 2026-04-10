@@ -3,17 +3,20 @@ package com.algotrading.backend.controller;
 import com.algotrading.backend.cache.MarketDataCache;
 import com.algotrading.backend.config.KiteProperties;
 import com.algotrading.backend.dto.OptionChainResponse;
+import com.algotrading.backend.engine.TradingEngineRegistry;
 import com.algotrading.backend.model.ExpiryType;
 import com.algotrading.backend.model.KiteInstrument;
 import com.algotrading.backend.service.KiteAuthService;
 import com.algotrading.backend.service.KiteInstrumentService;
 import com.algotrading.backend.service.KiteTickerService;
+import com.algotrading.backend.service.UserRegistryService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.servlet.view.RedirectView;
 
+import java.security.Principal;
 import java.time.LocalDate;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -30,6 +33,8 @@ public class KiteController {
     private final KiteTickerService tickerService;
     private final KiteProperties kiteProperties;
     private final MarketDataCache cache;
+    private final UserRegistryService userRegistry;
+    private final TradingEngineRegistry engineRegistry;
 
     // ---- Authentication ----
 
@@ -66,6 +71,46 @@ public class KiteController {
         }
         kiteAuthService.setAccessToken(token);
         return ResponseEntity.ok(Map.of("status", "connected", "message", "Access token set successfully"));
+    }
+
+    /**
+     * Per-user Kite access token update.
+     *
+     * Each subscriber has their own Zerodha account. After completing their daily Kite
+     * OAuth login they must update their token here so the engine can place live orders.
+     *
+     * This endpoint:
+     *  1. Saves the new token into the user's PlatformUser record (users.json).
+     *  2. Updates the token in the user's running engine (if any) so live orders work immediately.
+     *
+     * Users update their OWN token. Admins can update any user's token.
+     */
+    @PostMapping("/my-access-token")
+    public ResponseEntity<Map<String, Object>> setMyAccessToken(
+            @RequestBody Map<String, String> body,
+            Principal principal) {
+
+        String username = principal != null ? principal.getName() : null;
+        if (username == null) {
+            return ResponseEntity.status(401).body(Map.of("error", "Not authenticated"));
+        }
+
+        String token = body.get("accessToken");
+        if (token == null || token.isBlank()) {
+            return ResponseEntity.badRequest().body(Map.of("error", "accessToken is required"));
+        }
+
+        // 1. Persist to users.json
+        userRegistry.updateAccessToken(username, token);
+        log.info("[{}] Kite access token updated via /my-access-token", username);
+
+        // 2. Update the running engine if one exists (hot-reload token)
+        engineRegistry.getEngine(username).ifPresent(engine -> engine.updateKiteAccessToken(token));
+
+        return ResponseEntity.ok(Map.of(
+                "status",  "token_updated",
+                "message", "Kite access token saved. Your engine will use it for the next order.",
+                "user",    username));
     }
 
     /** Get Kite connection status */

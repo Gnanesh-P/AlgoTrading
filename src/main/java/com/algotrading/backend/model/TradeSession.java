@@ -1,5 +1,6 @@
 package com.algotrading.backend.model;
 
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -12,11 +13,17 @@ import java.util.List;
 
 /**
  * Represents the entire trading session for one day.
+ *
+ * Jackson note:
+ *   @JsonIgnoreProperties(ignoreUnknown = true) is critical for crash recovery:
+ *   if the JSON file was saved by an older version of the app, unknown fields
+ *   are silently skipped rather than throwing an exception on deserialization.
  */
 @Data
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
+@JsonIgnoreProperties(ignoreUnknown = true)
 public class TradeSession {
     private String sessionId;
     private LocalDate tradeDate;
@@ -30,7 +37,7 @@ public class TradeSession {
     // Candle tracking
     private Candle firstCandle;
     private Candle secondCandle;
-    private Candle thirdCandle;         // reserved / informational (entry happens at 3rd candle open)
+    private Candle thirdCandle;         // informational (entry happens at 3rd candle open)
     private Candle lastClosedCandle;    // Most recent 1-min candle closed
 
     // Locked strike (same for entire day including reversals)
@@ -51,14 +58,22 @@ public class TradeSession {
     private boolean trailingActive;          // true once targetProfit is first breached
     private double  trailingHighWatermark;   // running max PnL since trailing activated
 
+    // Session ownership — JWT username of whoever clicked Start
+    private String startedBy;
+
     // Session timestamps
     private LocalDateTime startTime;
     private LocalDateTime endTime;
-    private String stopReason;          // Why session was stopped
+    private String stopReason;
 
-    // Current open leg
-    private TradeEntry currentOpenLeg;
+    // ── Computed helpers ─────────────────────────────────────────────────────
+    // NOTE: currentOpenLeg is NOT a stored field — it is COMPUTED from tradeLegs.
+    // Do NOT add a `private TradeEntry currentOpenLeg` field here. If you do,
+    // Lombok will generate a `getCurrentOpenLeg()` getter that conflicts with the
+    // custom method below and will prevent ALL Lombok-generated getters (including
+    // getStartedBy(), getSessionId() etc.) from compiling.
 
+    /** Returns the first open (unclosed) trade leg, or null if none. */
     public TradeEntry getCurrentOpenLeg() {
         if (tradeLegs == null || tradeLegs.isEmpty()) return null;
         return tradeLegs.stream()
@@ -67,6 +82,7 @@ public class TradeSession {
                 .orElse(null);
     }
 
+    /** Sum of P&L across all closed legs. */
     public double getTotalRealizedPnL() {
         if (tradeLegs == null) return 0;
         return tradeLegs.stream()
@@ -75,6 +91,7 @@ public class TradeSession {
                 .sum();
     }
 
+    /** Realized P&L + open position P&L. */
     public double getTotalPnL() {
         return getTotalRealizedPnL() + openPnL;
     }

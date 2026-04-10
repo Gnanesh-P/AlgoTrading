@@ -31,9 +31,7 @@ public class TradingConfigRequest {
     private StrikeMode strikeMode;
 
     @Min(1)
-    private int lotQuantity;
-
-    private int lotSize = 75;  // NIFTY default lot size
+    private int lotQuantity;   // number of lots; total qty = lotQuantity × 65 (NIFTY fixed)
 
     @Min(1)
     private double targetProfit;

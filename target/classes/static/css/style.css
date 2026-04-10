@@ -132,6 +132,24 @@ select option { background: var(--bg3); }
 .ce-card .price-value { color: #58a6ff; }
 .pe-card .price-value { color: #f85149; }
 
+/* ===== ACTIVE CONFIG STRIP ===== */
+.active-config-strip {
+  display: flex; flex-wrap: wrap; gap: 6px;
+  padding: 8px 10px; margin-bottom: 12px;
+  background: rgba(31,111,235,0.07);
+  border: 1px solid rgba(31,111,235,0.25);
+  border-radius: var(--radius);
+}
+.cfg-chip {
+  font-size: 11px; font-weight: 600; padding: 3px 9px;
+  border-radius: 20px; border: 1px solid var(--border);
+  background: var(--bg3); color: var(--text);
+  white-space: nowrap;
+}
+.cfg-chip-time   { border-color: rgba(251,191,36,0.5);  background: rgba(251,191,36,0.08);  color: #fbbf24; }
+.cfg-chip-target { border-color: rgba(63,185,80,0.5);   background: rgba(63,185,80,0.08);   color: #3fb950; }
+.cfg-chip-sl     { border-color: rgba(218,54,51,0.5);   background: rgba(218,54,51,0.08);   color: #f85149; }
+
 /* ===== STATUS SECTION ===== */
 .status-section { background: var(--bg3); border-radius: var(--radius); padding: 12px; margin-bottom: 16px; }
 .status-row { display: flex; align-items: center; justify-content: space-between; padding: 5px 0; border-bottom: 1px solid var(--border); }
