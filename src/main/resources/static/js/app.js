@@ -19,8 +19,9 @@ let peToken     = 0;
 // INIT
 // ============================================================
 window.onload = () => {
-  // Handle Kite OAuth callback (?kite=connected)
   const params = new URLSearchParams(window.location.search);
+
+  // Handle Kite OAuth callback (?kite=connected)
   if (params.get('kite') === 'connected') {
     window.history.replaceState({}, document.title, '/');
     if (token) {
@@ -29,6 +30,17 @@ window.onload = () => {
       refreshKiteStatus();
     }
   }
+
+  // Handle JWT expiry redirect (?session=expired)
+  if (params.get('session') === 'expired') {
+    window.history.replaceState({}, document.title, '/');
+    const errEl = document.getElementById('login-error');
+    if (errEl) {
+      errEl.textContent = '⏰ Your session has expired. Please log in again.';
+      errEl.classList.remove('hidden');
+    }
+  }
+
   if (token) { showDashboard(); init(); }
   setInterval(updateClock, 1000);
   updateClock();
@@ -92,7 +104,8 @@ function populateStartTimes() {
 
     // Disable any slot whose 1st candle is at or before the current minute
     // (you need at least 2 minutes of future candles: 1st + 2nd before entry)
-    const disabled = t <= nowMins;
+    // const disabled = t <= nowMins;
+    const disabled = false;
     const label    = disabled ? `${val}  ✗ past` : val;
     html += `<option value="${val}" ${disabled ? 'disabled' : ''}>${label}</option>`;
   }
@@ -137,8 +150,7 @@ function logout() {
   if (wsClient)     wsClient.close();
   if (pricePoller)  clearInterval(pricePoller);
   if (statusPoller) clearInterval(statusPoller);
-  document.getElementById('dashboard').classList.add('hidden');
-  document.getElementById('login-screen').classList.remove('hidden');
+  window.location.href = '/';
 }
 
 function showDashboard() {
@@ -200,16 +212,30 @@ async function refreshKiteStatus() {
     const status = await get('/api/kite/status');
     const badge  = document.getElementById('kite-status-badge');
     const banner = document.getElementById('kite-banner');
+    const disconnectBtn = document.getElementById('btn-kite-disconnect');
     if (status.connected) {
-      badge.textContent  = '✅ Kite: Connected';
-      badge.className    = 'badge badge-connected';
+      badge.textContent    = status.tickerActive ? '✅ Kite: Live Feed' : '🔄 Kite: REST Polling';
+      badge.className      = 'badge badge-connected';
       banner.style.display = 'none';
+      if (disconnectBtn) disconnectBtn.style.display = 'inline-flex';
     } else {
-      badge.textContent  = '⚠️ Kite: Not Connected';
-      badge.className    = 'badge badge-disconnected';
+      badge.textContent    = '⚠️ Kite: Not Connected';
+      badge.className      = 'badge badge-disconnected';
       banner.style.display = 'flex';
+      if (disconnectBtn) disconnectBtn.style.display = 'none';
     }
   } catch (_) {}
+}
+
+async function disconnectKite() {
+  if (!confirm('Clear saved Kite token? You will need to set a new token tomorrow morning.')) return;
+  try {
+    await post('/api/kite/disconnect', {});
+    showMsg('config-msg', '🔌 Kite disconnected. Set a new token to reconnect.', 'info');
+    await refreshKiteStatus();
+  } catch (e) {
+    showMsg('config-msg', '❌ ' + (e.message || 'Disconnect failed'), 'error');
+  }
 }
 
 // ============================================================
@@ -319,20 +345,20 @@ async function saveConfig() {
 
   // ── Start-time validation ──────────────────────────────────────
   const startTimeSel = document.getElementById('cfg-start-time');
-  const selOpt = startTimeSel.selectedOptions[0];
-  if (!selOpt || selOpt.disabled) {
-    showMsg('config-msg', '❌ Selected start time has already passed. Please choose a future minute.', 'error');
-    populateStartTimes();   // refresh so the user sees updated options
-    return;
-  }
+  // const selOpt = startTimeSel.selectedOptions[0];
+  // if (!selOpt || selOpt.disabled) {
+  //   showMsg('config-msg', '❌ Selected start time has already passed. Please choose a future minute.', 'error');
+  //   populateStartTimes();   // refresh so the user sees updated options
+  //   return;
+  // }
   const [selH, selM] = startTimeSel.value.split(':').map(Number);
   const now = new Date();
   const nowMins = now.getHours() * 60 + now.getMinutes();
-  if (selH * 60 + selM <= nowMins) {
-    showMsg('config-msg', '❌ Start time must be a future minute candle (strictly after current time).', 'error');
-    populateStartTimes();
-    return;
-  }
+  // if (selH * 60 + selM <= nowMins) {
+  //   showMsg('config-msg', '❌ Start time must be a future minute candle (strictly after current time).', 'error');
+  //   populateStartTimes();
+  //   return;
+  // }
   // ──────────────────────────────────────────────────────────────
 
   // Read futures token
@@ -714,6 +740,12 @@ function doConnect() {
     const socket = new SockJS('/ws');
     wsClient = Stomp.over(socket);
     wsClient.debug = null;
+
+    // Client-side heartbeat: send a ping every 10s, expect server pong every 10s.
+    // This keeps the STOMP connection alive on Render (which closes idle WS after 30s).
+    wsClient.heartbeat.outgoing = 10000;
+    wsClient.heartbeat.incoming = 10000;
+
     wsClient.connect({}, () => {
       document.getElementById('footer-ws').textContent = 'WS: Connected';
 
@@ -752,6 +784,7 @@ async function get(url) {
   const res = await fetch(url, {
     headers: { 'Authorization': 'Bearer ' + token }
   });
+  if (res.status === 401) { handleSessionExpired(); return; }
   if (!res.ok) throw new Error('HTTP ' + res.status);
   return res.json();
 }
@@ -760,6 +793,7 @@ async function post(url, body, needAuth = true) {
   const headers = { 'Content-Type': 'application/json' };
   if (needAuth && token) headers['Authorization'] = 'Bearer ' + token;
   const res = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body) });
+  if (res.status === 401 && needAuth) { handleSessionExpired(); return; }
   if (!res.ok) {
     // Prefer a plain-text body (e.g. 409 conflict message) over JSON error
     const ct  = res.headers.get('content-type') || '';
@@ -772,6 +806,17 @@ async function post(url, body, needAuth = true) {
   const ct = res.headers.get('content-type') || '';
   if (ct.includes('application/json')) return res.json();
   return res.text();
+}
+
+function handleSessionExpired() {
+  token = '';
+  localStorage.removeItem('jwtToken');
+  localStorage.removeItem('jwtUsername');
+  if (wsClient)     wsClient.close();
+  if (pricePoller)  clearInterval(pricePoller);
+  if (statusPoller) clearInterval(statusPoller);
+  // Redirect to login with a message
+  window.location.href = '/?session=expired';
 }
 
 function fmt(n) {

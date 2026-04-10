@@ -37,6 +37,7 @@
     </div>
     <div class="nav-right">
       <span id="kite-status-badge" class="badge badge-disconnected">Kite: Not Connected</span>
+      <button id="btn-kite-disconnect" class="btn btn-sm btn-outline" onclick="disconnectKite()" style="display:none;">🔌 Disconnect Kite</button>
       <span id="strategy-badge" class="badge badge-idle">Strategy: IDLE</span>
       <button class="btn btn-sm btn-danger" onclick="logout()">Logout</button>
     </div>
@@ -44,11 +45,16 @@
 
   <!-- KITE CONNECT BANNER (shown when not connected) -->
   <div id="kite-banner" class="kite-banner">
-    <span>⚠️ Connect Kite to fetch live instruments and start live trading.</span>
+    <div>
+      <span>⚠️ Kite not connected — connect once to start receiving live tick data.</span>
+      <div style="font-size:11px;color:#a78233;margin-top:3px;">
+        Token is saved automatically and restored on every restart. Set a fresh token each morning (Kite tokens expire daily).
+      </div>
+    </div>
     <div class="banner-actions">
-      <button class="btn btn-warning" onclick="connectKite()">Connect Kite</button>
-      <span style="color:#888;font-size:12px;">OR</span>
-      <input type="text" id="manual-token" placeholder="Paste Access Token" class="input-sm"/>
+      <button class="btn btn-warning" onclick="connectKite()">Connect via OAuth</button>
+      <span style="color:#888;font-size:12px;">OR paste token:</span>
+      <input type="text" id="manual-token" placeholder="Kite Access Token" class="input-sm"/>
       <button class="btn btn-sm btn-outline" onclick="setManualToken()">Set Token</button>
     </div>
   </div>

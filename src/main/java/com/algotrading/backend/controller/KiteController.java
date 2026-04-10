@@ -9,6 +9,7 @@ import com.algotrading.backend.model.KiteInstrument;
 import com.algotrading.backend.service.KiteAuthService;
 import com.algotrading.backend.service.KiteInstrumentService;
 import com.algotrading.backend.service.KiteTickerService;
+import com.algotrading.backend.service.KiteTokenStore;
 import com.algotrading.backend.service.UserRegistryService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -32,6 +33,7 @@ public class KiteController {
     private final KiteInstrumentService instrumentService;
     private final KiteTickerService tickerService;
     private final KiteProperties kiteProperties;
+    private final KiteTokenStore kiteTokenStore;
     private final MarketDataCache cache;
     private final UserRegistryService userRegistry;
     private final TradingEngineRegistry engineRegistry;
@@ -111,6 +113,19 @@ public class KiteController {
                 "status",  "token_updated",
                 "message", "Kite access token saved. Your engine will use it for the next order.",
                 "user",    username));
+    }
+
+    /**
+     * Disconnect Kite — clears the saved token from disk and stops the WebSocket.
+     * The user will need to set a new token to reconnect (e.g. after token expiry).
+     */
+    @PostMapping("/disconnect")
+    public ResponseEntity<Map<String, Object>> disconnect() {
+        kiteTokenStore.clear();
+        kiteProperties.setAccessToken(null);
+        tickerService.unsubscribeAll();
+        return ResponseEntity.ok(Map.of("status", "disconnected",
+                "message", "Kite access token cleared. Set a new token to reconnect."));
     }
 
     /** Get Kite connection status */

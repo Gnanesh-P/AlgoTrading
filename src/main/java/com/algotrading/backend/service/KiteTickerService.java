@@ -6,6 +6,7 @@ import com.zerodhatech.kiteconnect.kitehttp.exceptions.KiteException;
 import com.zerodhatech.ticker.KiteTicker;
 import com.zerodhatech.models.Tick;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 
@@ -24,6 +25,7 @@ public class KiteTickerService {
 
     private final KiteProperties kite;
     private final MarketDataService marketDataService;
+    private final KiteTokenStore tokenStore;
 
     // token → symbol mapping (maintained for lifetime of subscription)
     private final Map<Long, String> tokenToSymbol = new ConcurrentHashMap<>();
@@ -34,16 +36,18 @@ public class KiteTickerService {
     private volatile boolean connected = false;
 
     public KiteTickerService(KiteProperties kite,
+                             KiteTokenStore tokenStore,
                              @Lazy MarketDataService marketDataService) {
         this.kite = kite;
+        this.tokenStore = tokenStore;
         this.marketDataService = marketDataService;
     }
 
     // ---- Lifecycle ----
 
     /**
-     * Called after a successful Kite access token exchange.
-     * Creates a fresh KiteTicker WebSocket connection.
+     * Called after a successful Kite access token exchange or manual token update.
+     * Reconnects the KiteTicker WebSocket with the new token.
      */
     public synchronized void onTokenExchanged() {
         disconnectExisting();
@@ -66,30 +70,45 @@ public class KiteTickerService {
                 }
             });
 
+            // Single disconnect listener — sets connected=false so isActive() is accurate
+            // and the REST polling fallback kicks in until the WebSocket reconnects.
             ticker.setOnDisconnectedListener(() -> {
-                log.warn("KiteTicker WebSocket disconnected");
+                log.warn("KiteTicker WebSocket disconnected — REST polling fallback will activate");
                 connected = false;
             });
 
-//            ticker.setOnErrorListener((ex, message, errorType) ->
-//                    log.error("KiteTicker error [{}]: {} {}",
-//                            errorType, message, ex != null ? "- " + ex : "")
-//            );
+            // Error listener: detect 403 (expired/invalid token) and kill the reconnect loop.
+            // Without this, KiteTicker retries indefinitely printing stack traces every 30s.
+            ticker.setOnErrorListener(new com.zerodhatech.ticker.OnError() {
+                @Override public void onError(Exception e) {
+                    handleTickerError(e.getMessage());
+                }
+                @Override public void onError(KiteException e) {
+                    handleTickerError(e.getMessage());
+                }
+                @Override public void onError(String msg) {
+                    handleTickerError(msg);
+                }
+            });
 
             ticker.setOnTickerArrivalListener(this::processTicks);
-
-//            ticker.setTryReconnection((reconnectIntervalInMilliSeconds, retryCount) ->
-//                log.info("KiteTicker reconnecting... attempt={} interval={}ms", retryCount, reconnectIntervalInMilliSeconds)
-//            );
-//
-            ticker.setOnDisconnectedListener(() ->
-                    System.out.println("WebSocket Disconnected ❌")
-            );
 
             ticker.connect();
             log.info("KiteTicker WebSocket connecting to Zerodha...");
         } catch (Exception | KiteException e) {
             log.error("Failed to initialize KiteTicker: {}", e.getMessage());
+        }
+    }
+
+    private void handleTickerError(String msg) {
+        if (msg != null && (msg.contains("403") || msg.contains("Forbidden"))) {
+            log.error("KiteTicker: 403 Forbidden — access token expired or invalid. " +
+                      "Stopping reconnection. Please set a fresh token via the UI.");
+            kite.setAccessToken(null);   // clears isConnected() → UI banner reappears
+            tokenStore.clear();          // delete stale file so restart doesn't reuse it
+            disconnectExisting();        // stops KiteTicker's internal reconnect timer
+        } else {
+            log.warn("KiteTicker error: {}", msg);
         }
     }
 

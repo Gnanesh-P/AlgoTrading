@@ -52,8 +52,11 @@ com\algotrading\backend\controller\TradingController.class
 com\algotrading\backend\model\TradeEntry$TradeEntryBuilder.class
 com\algotrading\backend\model\OptionType.class
 com\algotrading\backend\service\ConfigService.class
+com\algotrading\backend\service\KiteRestPollService.class
+com\algotrading\backend\service\KiteTickerService$1.class
 com\algotrading\backend\dto\LoginRequest.class
 com\algotrading\backend\cache\MarketDataCache.class
 com\algotrading\backend\broker\BrokerService.class
 com\algotrading\backend\model\KiteInstrument$KiteInstrumentBuilder.class
 com\algotrading\backend\dto\TradeSessionResponse$TradeLegResponse.class
+com\algotrading\backend\service\KiteTokenStore.class
