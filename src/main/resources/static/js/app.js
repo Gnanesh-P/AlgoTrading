@@ -191,14 +191,9 @@ async function setManualToken() {
   const t = document.getElementById('manual-token').value.trim();
   if (!t) return;
   try {
-    // 1. Save as the per-user token (for live trading via user's own Kite account)
+    // Single endpoint — saves per-user token AND updates global Kite connection + WebSocket
     await post('/api/kite/my-access-token', { accessToken: t });
-
-    // 2. Also set global admin token (for shared instrument fetching / paper-mode ticks)
-    //    Best-effort — silently ignore if user lacks admin Kite credentials
-    try { await post('/api/kite/access-token', { accessToken: t }); } catch (_) {}
-
-    showMsg('config-msg', '✅ Kite token saved — live trading enabled!', 'success');
+    showMsg('config-msg', '✅ Kite token saved — connected!', 'success');
     await refreshKiteStatus();
     loadFuturesDropdown();
     loadOptionChain();

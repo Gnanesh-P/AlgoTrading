@@ -109,9 +109,20 @@ public class KiteController {
         // 2. Update the running engine if one exists (hot-reload token)
         engineRegistry.getEngine(username).ifPresent(engine -> engine.updateKiteAccessToken(token));
 
+        // 3. Also update the GLOBAL Kite connection (shared ticker + instrument feed).
+        //    This makes kiteProperties.isConnected() = true so:
+        //      - Status badge shows "Kite: Connected"
+        //      - KiteTicker WebSocket starts (paper-mode tick feed)
+        //      - Instrument/option chain fetching works for everyone
+        //    Any authenticated user setting their token initialises the global connection.
+        //    The global connection uses whichever token was set most recently — this is fine
+        //    because all Kite tokens from the same API key can fetch instruments and stream ticks.
+        kiteAuthService.setAccessToken(token);
+        log.info("[{}] Global Kite connection updated from /my-access-token", username);
+
         return ResponseEntity.ok(Map.of(
                 "status",  "token_updated",
-                "message", "Kite access token saved. Your engine will use it for the next order.",
+                "message", "Kite access token saved and global connection updated.",
                 "user",    username));
     }
 
