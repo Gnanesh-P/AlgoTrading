@@ -21,12 +21,15 @@ app:
     users:
       - username: ${APP_USERNAME:admin}
         password: ${APP_PASSWORD:admin123}
-      - username: ${APP_USER2:}
-        password: ${APP_PASS2:}
-      - username: ${APP_USER3:}
-        password: ${APP_PASS3:}
-      - username: ${APP_USER4:}
-        password: ${APP_PASS4:}
+      - username: ${APP_USER2:gowtham}
+        password: ${APP_PASS2:admin123}
+      - username: ${APP_USER3:nithish}
+        password: ${APP_PASS3:nithish123}
+      - username: ${APP_USER4:gnanesh}
+        password: ${APP_PASS4:gnanesh123}
+  # Persistent data directory.  On Render: mount a disk at /data and set DATA_DIR=/data
+  users-file:   ${USERS_FILE:./data/users.json}
+  session-file: ${SESSION_FILE:./data/session.json}
   trading:
     market-open: "09:15"
     market-close: "15:30"

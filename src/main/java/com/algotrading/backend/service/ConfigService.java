@@ -37,7 +37,7 @@ public class ConfigService {
                 .startCandleTime(LocalTime.parse(req.getStartCandleTime(), TIME_FMT))
                 .strikeMode(req.getStrikeMode())
                 .lotQuantity(req.getLotQuantity())
-                .lotSize(req.getLotSize() > 0 ? req.getLotSize() : 65)
+//                .lotSize(req.getLotSize() > 0 ? req.getLotSize() : 65)
                 .targetProfit(req.getTargetProfit())
                 .stopLoss(req.getStopLoss())
                 .maxReversals(req.getMaxReversals())

@@ -43,6 +43,19 @@ function init() {
   document.getElementById('cfg-expiry').addEventListener('change', loadOptionChain);
   populateStartTimes();                    // fill start-time dropdown on load
   setInterval(populateStartTimes, 60000); // refresh every minute so past slots disappear
+  // Live qty display: update "Total qty" whenever lot count changes
+  const lotQtyEl = document.getElementById('cfg-lot-qty');
+  if (lotQtyEl) {
+    lotQtyEl.addEventListener('input', updateQtyDisplay);
+    updateQtyDisplay();
+  }
+}
+
+/** Show how many units will be ordered (lots × 65) */
+function updateQtyDisplay() {
+  const lots  = parseInt(document.getElementById('cfg-lot-qty')?.value) || 1;
+  const total = document.getElementById('qty-total');
+  if (total) total.textContent = (lots * 65).toLocaleString('en-IN');
 }
 
 // ============================================================
@@ -166,8 +179,14 @@ async function setManualToken() {
   const t = document.getElementById('manual-token').value.trim();
   if (!t) return;
   try {
-    await post('/api/kite/access-token', { accessToken: t });
-    showMsg('config-msg', '✅ Access token set. Kite connected!', 'success');
+    // 1. Save as the per-user token (for live trading via user's own Kite account)
+    await post('/api/kite/my-access-token', { accessToken: t });
+
+    // 2. Also set global admin token (for shared instrument fetching / paper-mode ticks)
+    //    Best-effort — silently ignore if user lacks admin Kite credentials
+    try { await post('/api/kite/access-token', { accessToken: t }); } catch (_) {}
+
+    showMsg('config-msg', '✅ Kite token saved — live trading enabled!', 'success');
     await refreshKiteStatus();
     loadFuturesDropdown();
     loadOptionChain();
@@ -331,6 +350,7 @@ async function saveConfig() {
   // Sync the hidden cfg-eod from the visible alt checkbox (if trailing row is hidden)
   const eodChecked = document.getElementById('cfg-eod').checked;
 
+  const lots = parseInt(document.getElementById('cfg-lot-qty').value) || 1;
   savedConfig = {
     futureSymbol:    futSel.value,
     futureToken,
@@ -339,7 +359,7 @@ async function saveConfig() {
     expiryType:      expiry,
     entryStartTime:  startTimeSel.value,
     strikeMode:      strikeMode === 'AUTO_ATM' ? 'AUTO' : 'MANUAL',
-    lotSize:         parseInt(document.getElementById('cfg-lot-size').value),
+    lotQuantity:     lots,          // number of lots (1 lot = 65 qty, hardcoded by NIFTY spec)
     maxReversals:    parseInt(document.getElementById('cfg-max-reversals').value),
     targetPrice:     parseFloat(document.getElementById('cfg-target').value),
     stopLoss:        parseFloat(document.getElementById('cfg-sl').value),
@@ -666,10 +686,20 @@ function doConnect() {
     wsClient.debug = null;
     wsClient.connect({}, () => {
       document.getElementById('footer-ws').textContent = 'WS: Connected';
-      // On any trade update from backend → refresh status immediately
+
+      // Subscribe to the shared broadcast topic (backward compat)
       wsClient.subscribe('/topic/trade-updates', () => {
         fetchAndRenderStatus();
       });
+
+      // Also subscribe to the per-user topic so this user only gets their own updates
+      // even when multiple users are trading simultaneously.
+      const myUsername = localStorage.getItem('jwtUsername');
+      if (myUsername) {
+        wsClient.subscribe('/topic/trade-updates/' + myUsername, () => {
+          fetchAndRenderStatus();
+        });
+      }
     }, () => {
       document.getElementById('footer-ws').textContent = 'WS: Reconnecting...';
       setTimeout(doConnect, 5000);

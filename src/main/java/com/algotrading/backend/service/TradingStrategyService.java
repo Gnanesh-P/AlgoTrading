@@ -4,6 +4,7 @@ import com.algotrading.backend.broker.BrokerService;
 import com.algotrading.backend.broker.BrokerServiceFactory;
 import com.algotrading.backend.cache.MarketDataCache;
 import com.algotrading.backend.model.*;
+import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
@@ -42,11 +43,174 @@ public class TradingStrategyService {
     private final KiteInstrumentService kiteInstrumentService;
     private final KiteTickerService kiteTickerService;
     private final CandleAggregatorService candleAggregator;
+    private final SessionPersistenceService sessionPersistence;
     private final SimpMessagingTemplate messagingTemplate;
+
+    // ── Crash Recovery ────────────────────────────────────────────────────────
+
+    /**
+     * On every application startup, check if a session was active when the server
+     * last went down. If the session was IN_POSITION, restore it so the open
+     * Zerodha position is not left unmonitored.
+     *
+     * What happens on recovery:
+     *  • Session is reloaded into MarketDataCache (state = IN_POSITION).
+     *  • Locked CE/PE instruments are re-subscribed to KiteTicker.
+     *  • The futures instrument is re-subscribed.
+     *  • The next futures candle close will trigger reversal/exit checks normally.
+     *  • UI shows "RUNNING" with stopReason = "(RECOVERED - server restarted)".
+     *
+     * Limitations:
+     *  • Candle history is lost — no 1st/2nd candle reference is available. But the
+     *    reversal logic only uses firstCandle.getClose(), which IS stored in the session.
+     *  • If the server was down for multiple candles, those reversal checks are missed.
+     *    The position will resume monitoring from the next candle onwards.
+     */
+    @PostConstruct
+    public void recoverSession() {
+        sessionPersistence.load().ifPresent(session -> {
+            if (session.getState() == StrategyState.IN_POSITION
+                    || session.getState() == StrategyState.WAITING_FOR_CANDLES) {
+
+                log.warn("⚠️  CRASH RECOVERY: Restoring session {} (state={}, startedBy={})",
+                        session.getSessionId(), session.getState(), session.getStartedBy());
+
+                // Mark recovery in the session so UI can highlight it
+                if (session.getStopReason() == null || session.getStopReason().isBlank()) {
+                    session.setStopReason("(RECOVERED — server restarted)");
+                }
+
+                cache.setSession(session);
+                TradingConfig config = session.getConfig();
+
+                // Re-subscribe futures + locked options to KiteTicker
+                Map<Long, String> toResubscribe = new HashMap<>();
+                if (config.getFuturesInstrument() != null) {
+                    kiteInstrumentService.findBySymbol(config.getFuturesInstrument())
+                            .filter(i -> i.getInstrumentToken() > 0)
+                            .ifPresent(i -> toResubscribe.put(i.getInstrumentToken(), i.getTradingsymbol()));
+                }
+                if (session.getLockedCeInstrument() != null) {
+                    kiteInstrumentService.findBySymbol(session.getLockedCeInstrument())
+                            .filter(i -> i.getInstrumentToken() > 0)
+                            .ifPresent(i -> toResubscribe.put(i.getInstrumentToken(), i.getTradingsymbol()));
+                }
+                if (session.getLockedPeInstrument() != null) {
+                    kiteInstrumentService.findBySymbol(session.getLockedPeInstrument())
+                            .filter(i -> i.getInstrumentToken() > 0)
+                            .ifPresent(i -> toResubscribe.put(i.getInstrumentToken(), i.getTradingsymbol()));
+                }
+                if (!toResubscribe.isEmpty()) {
+                    kiteTickerService.subscribe(toResubscribe);
+                    log.info("Recovery: re-subscribed {} instruments to KiteTicker", toResubscribe.size());
+                } else {
+                    log.warn("Recovery: could not find tokens for re-subscription — " +
+                             "ensure Kite is connected so instrument cache is loaded");
+                }
+
+            } else {
+                // Session was STOPPED / IDLE — no recovery needed; clean up the file
+                log.info("Persisted session found but state={} — clearing file, no recovery needed",
+                        session.getState());
+                sessionPersistence.clear();
+            }
+        });
+    }
+
+    /**
+     * Real-time SL / Target check — called on EVERY option tick, not just candle close.
+     *
+     * Why this matters:
+     *   onCandleClose() fires once per minute.  If the option price moves through
+     *   the SL threshold mid-candle, we would not catch it until the next candle
+     *   close — by which time the loss could be significantly worse.
+     *
+     *   This method is called from MarketDataService.processTick() for every incoming
+     *   tick.  It checks only the instrument that the open leg is tracking, so the
+     *   overhead is minimal (one cache read + two comparisons per tick when active).
+     *
+     * Exit fires immediately, exactly when the threshold is crossed.
+     */
+    public synchronized void checkSLTargetOnTick(String instrument, double ltp) {
+        TradeSession session = cache.getSession();
+        if (session == null || session.getState() != StrategyState.IN_POSITION) return;
+
+        TradeEntry openLeg = session.getCurrentOpenLeg();
+        if (openLeg == null || !instrument.equals(openLeg.getInstrument())) return;
+
+        // Live P&L using this tick's price
+        double liveLegPnL = (ltp - openLeg.getEntryPrice()) * openLeg.getQuantity();
+        double totalPnL   = session.getTotalRealizedPnL() + liveLegPnL;
+        TradingConfig config = session.getConfig();
+
+        // Always update openPnL for live UI display
+        session.setOpenPnL(liveLegPnL);
+
+        // ── Stop Loss ─────────────────────────────────────────────────────────
+        if (totalPnL <= -config.getStopLoss()) {
+            log.info("⚡ SL hit on tick: totalPnL={} <= -{} | ltp={} instrument={}",
+                    totalPnL, config.getStopLoss(), ltp, instrument);
+            exitCurrentPosition(session, "STOPLOSS");
+            stopSession(session, "Stop loss hit: " + totalPnL);
+            cache.setSession(session);
+            sessionPersistence.save(session);
+            broadcastUpdate(session);
+            return;
+        }
+
+        double trailing = config.getTrailingProfit();
+
+        // ── Plain Target (no trailing) ────────────────────────────────────────
+        if (trailing <= 0 && totalPnL >= config.getTargetProfit()) {
+            log.info("⚡ Target hit on tick: totalPnL={} >= {} | ltp={} instrument={}",
+                    totalPnL, config.getTargetProfit(), ltp, instrument);
+            exitCurrentPosition(session, "TARGET");
+            stopSession(session, "Target profit reached: " + totalPnL);
+            cache.setSession(session);
+            sessionPersistence.save(session);
+            broadcastUpdate(session);
+            return;
+        }
+
+        // ── Trailing Target ───────────────────────────────────────────────────
+        if (trailing > 0) {
+            if (!session.isTrailingActive() && totalPnL >= config.getTargetProfit()) {
+                session.setTrailingActive(true);
+                session.setTrailingHighWatermark(totalPnL);
+                log.info("⚡ Trailing activated on tick: pnl={}, step={}", totalPnL, trailing);
+            }
+            if (session.isTrailingActive()) {
+                if (totalPnL > session.getTrailingHighWatermark()) {
+                    log.info("⚡ Trailing watermark raised on tick: {} → {}", session.getTrailingHighWatermark(), totalPnL);
+                    session.setTrailingHighWatermark(totalPnL);
+                }
+                double exitLevel = session.getTrailingHighWatermark() - trailing;
+                if (totalPnL <= exitLevel) {
+                    log.info("⚡ Trailing stop on tick: pnl={} <= watermark({}) - step({}) = {}",
+                            totalPnL, session.getTrailingHighWatermark(), trailing, exitLevel);
+                    exitCurrentPosition(session, "TRAILING_STOP");
+                    stopSession(session, String.format(
+                            "Trailing stop (real-time): watermark=%.0f step=%.0f pnl=%.0f",
+                            session.getTrailingHighWatermark(), trailing, totalPnL));
+                    cache.setSession(session);
+                    sessionPersistence.save(session);
+                    broadcastUpdate(session);
+                    return;
+                }
+            }
+        }
+
+        // Persist updated openPnL to cache (no file write — keep trading hot path fast)
+        cache.setSession(session);
+    }
 
     /**
      * Called on every new 1-minute candle close for the configured NIFTY Futures instrument.
-     * This is the main strategy event handler.
+     * This is the main strategy event handler for reversal detection.
+     *
+     * Note: SL / Target are now checked in real-time via checkSLTargetOnTick().
+     * This method only handles reversal logic and direction changes based on candle closes.
+     * If the session was already stopped by a tick-level SL/Target, this method returns early.
      */
     public synchronized void onCandleClose(Candle candle) {
         TradeSession session = cache.getSession();
@@ -65,15 +229,20 @@ public class TradingStrategyService {
         LocalTime candleTime = candle.getOpenTime().toLocalTime();
         LocalTime startTime = config.getStartCandleTime();
 
+        // ── BUG FIX: update openPnL BEFORE running strategy logic ────────────
+        // Previously, updateOpenPnL() was called AFTER handleInPosition(), meaning
+        // checkExitConditions() used the P&L from the PREVIOUS candle close.
+        // Now we update first so every check in this candle uses fresh prices.
+        updateOpenPnL(session);
+
         if (session.getState() == StrategyState.WAITING_FOR_CANDLES) {
             handleWaitingForCandles(session, candle, candleTime, startTime);
         } else if (session.getState() == StrategyState.IN_POSITION) {
             handleInPosition(session, candle);
         }
 
-        // Update open P&L
-        updateOpenPnL(session);
         cache.setSession(session);
+        sessionPersistence.save(session);   // persist every candle-close state change
         broadcastUpdate(session);
     }
 
@@ -427,6 +596,7 @@ public class TradingStrategyService {
             exitCurrentPosition(session, "EOD");
         }
         stopSession(session, "End of day square-off at 15:29");
+        sessionPersistence.clear();         // clean day end — no recovery needed tomorrow
         cache.setSession(session);
         broadcastUpdate(session);
     }
@@ -436,6 +606,9 @@ public class TradingStrategyService {
         session.setEndTime(LocalDateTime.now());
         session.setStopReason(reason);
         log.info("Strategy stopped: {}", reason);
+        // Persist the final STOPPED state so recovery on restart skips it
+        sessionPersistence.save(session);
+        // Could also clear here, but saving STOPPED is safer — recovery will see STOPPED and skip
     }
 
     /**
@@ -472,12 +645,13 @@ public class TradingStrategyService {
                 .build();
 
         cache.setSession(session);
+        sessionPersistence.save(session);   // initial save so recovery can find it immediately
         log.info("Strategy started by [{}]. Session: {}", startedBy, session.getSessionId());
         return session;
     }
 
     /**
-     * Manually stop the strategy.
+     * Manually stop the strategy (user clicked Stop or admin override).
      */
     public TradeSession stopStrategy() {
         TradeSession session = cache.getSession();
@@ -486,6 +660,7 @@ public class TradingStrategyService {
             exitCurrentPosition(session, "MANUAL_STOP");
         }
         stopSession(session, "Manual stop");
+        sessionPersistence.clear();   // intentional stop — no recovery on next restart
         cache.setSession(session);
         return session;
     }

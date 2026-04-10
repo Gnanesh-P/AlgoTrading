@@ -123,19 +123,20 @@
           <select id="cfg-start-time" onfocus="populateStartTimes()" onclick="populateStartTimes()"></select>
         </div>
         <div class="form-group">
-          <label>Lot Quantity</label>
+          <label>Number of Lots
+            <span style="font-size:11px;color:#94a3b8;display:block;">1 lot = 65 qty (NIFTY fixed)</span>
+          </label>
           <input type="number" id="cfg-lot-qty" value="1" min="1"/>
         </div>
       </div>
 
       <div class="form-row">
         <div class="form-group">
-          <label>Lot Size</label>
-          <input type="number" id="cfg-lot-size" value="75" min="1"/>
-        </div>
-        <div class="form-group">
           <label>Max Reversals</label>
           <input type="number" id="cfg-max-reversals" value="3" min="0"/>
+        </div>
+        <div class="form-group" style="display:flex;align-items:center;padding-top:20px;">
+          <span id="qty-display" style="font-size:13px;color:#94a3b8;">Total qty: <strong id="qty-total">65</strong> units</span>
         </div>
       </div>
 
@@ -201,6 +202,10 @@
         <div class="status-row">
           <span class="status-label">State</span>
           <span id="s-state" class="status-value badge badge-idle">IDLE</span>
+        </div>
+        <div class="status-row">
+          <span class="status-label">Started By</span>
+          <span id="s-started-by" class="status-value" style="font-weight:600;">—</span>
         </div>
         <div class="status-row">
           <span class="status-label">Reversals</span>

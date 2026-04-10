@@ -9,12 +9,21 @@ import java.time.LocalTime;
 
 /**
  * Pre-market configuration set by the user before trading starts.
+ *
+ * Quantity note:
+ *   NIFTY lot size is fixed at 65 units (as per NSE specification).
+ *   Users configure the NUMBER OF LOTS they want to trade (lotQuantity).
+ *   Total order quantity = lotQuantity × NIFTY_LOT_SIZE (65).
+ *   There is no user-configurable "lot size" field — it is always 65.
  */
 @Data
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
 public class TradingConfig {
+
+    /** NIFTY options lot size — fixed by NSE. Always 65. */
+    public static final int NIFTY_LOT_SIZE = 65;
 
     // Instruments
     private String futuresInstrument;     // e.g. "NIFTY25APRFUT"
@@ -31,8 +40,7 @@ public class TradingConfig {
     private StrikeMode strikeMode;        // MANUAL or AUTO_ATM
 
     // Trade parameters
-    private int lotQuantity;              // Number of lots
-    private int lotSize;                  // NIFTY lot size (default 75)
+    private int lotQuantity;              // Number of NIFTY lots (1 lot = 65 qty)
     private double targetProfit;          // Cumulative target in rupees
     private double stopLoss;              // Cumulative stop loss in rupees (positive number)
     private int maxReversals;             // Max number of reversals allowed
@@ -48,7 +56,11 @@ public class TradingConfig {
     // Mode
     private TradeMode tradeMode;          // LIVE or PAPER
 
+    /**
+     * Total order quantity = lots × 65.
+     * e.g. 1 lot = 65 qty, 2 lots = 130 qty.
+     */
     public int getTotalQuantity() {
-        return lotQuantity * lotSize;
+        return lotQuantity * NIFTY_LOT_SIZE;
     }
 }
