@@ -104,7 +104,7 @@ public class KiteController {
 
         // 1. Persist to users.json
         userRegistry.updateAccessToken(username, token);
-        log.info("[{}] Kite access token updated via /my-access-token", username);
+        log.error("[{}] Kite access token updated via /my-access-token", username);
 
         // 2. Update the running engine if one exists (hot-reload token)
         engineRegistry.getEngine(username).ifPresent(engine -> engine.updateKiteAccessToken(token));

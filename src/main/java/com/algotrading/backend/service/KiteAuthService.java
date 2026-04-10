@@ -118,6 +118,7 @@ public class KiteAuthService {
         kite.setAccessToken(accessToken);
         kiteConnect.setAccessToken(accessToken);
         tokenStore.save(accessToken);              // persist → survives restart
+        log.error("Saved toke in the store");
         kiteTickerService.onTokenExchanged();      // (re)connect WebSocket
     }
 

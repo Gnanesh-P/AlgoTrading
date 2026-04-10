@@ -50,24 +50,26 @@ public class KiteTickerService {
      * Reconnects the KiteTicker WebSocket with the new token.
      */
     public synchronized void onTokenExchanged() {
+        log.error("Kite Token : {}", kite.getAccessToken());
         disconnectExisting();
+        log.error("Kite Token 1: {}", kite.getAccessToken());
         initAndConnect();
     }
 
     private void initAndConnect() {
-        String token  = kite.getAccessToken();
+        String token = kite.getAccessToken();
         String apiKey = kite.getApiKey();
-        log.info("KiteTicker init — apiKey={} tokenPresent={} tokenPrefix={}",
+        log.error("KiteTicker init — apiKey={} tokenPresent={} tokenPrefix={}",
                 apiKey,
                 token != null && !token.isBlank(),
                 token != null && token.length() > 6 ? token.substring(0, 6) + "…" : "N/A");
 
         if (token == null || token.isBlank()) {
-            log.warn("KiteTicker: no access token — skipping WebSocket connect");
+            log.error("KiteTicker: no access token — skipping WebSocket connect");
             return;
         }
         if (apiKey == null || apiKey.isBlank()) {
-            log.warn("KiteTicker: no API key — skipping WebSocket connect");
+            log.error("KiteTicker: no API key — skipping WebSocket connect");
             return;
         }
 
@@ -76,7 +78,7 @@ public class KiteTickerService {
             ticker.setTryReconnection(true);
             ticker.setMaximumRetries(10);
             ticker.setMaximumRetryInterval(30);
-
+            log.error("Setting ticker");
             ticker.setOnConnectedListener(() -> {
                 log.info("KiteTicker WebSocket connected");
                 connected = true;
@@ -96,13 +98,18 @@ public class KiteTickerService {
             // Error listener: detect 403 (expired/invalid token) and kill the reconnect loop.
             // Without this, KiteTicker retries indefinitely printing stack traces every 30s.
             ticker.setOnErrorListener(new com.zerodhatech.ticker.OnError() {
-                @Override public void onError(Exception e) {
+                @Override
+                public void onError(Exception e) {
                     handleTickerError(e.getMessage());
                 }
-                @Override public void onError(KiteException e) {
+
+                @Override
+                public void onError(KiteException e) {
                     handleTickerError(e.getMessage());
                 }
-                @Override public void onError(String msg) {
+
+                @Override
+                public void onError(String msg) {
                     handleTickerError(msg);
                 }
             });
@@ -120,7 +127,7 @@ public class KiteTickerService {
         log.error("KiteTicker error received: [{}]", msg);
         if (msg != null && (msg.contains("403") || msg.contains("Forbidden"))) {
             log.error("KiteTicker: 403 Forbidden — token is expired or doesn't match the API key. " +
-                      "REST polling fallback will provide ticks. Set a fresh token via the UI.");
+                    "REST polling fallback will provide ticks. Set a fresh token via the UI.");
             // Do NOT clear kite.accessToken — REST calls still need it.
             // REST polling will activate automatically since tickerActive = false.
             tokenStore.clear();    // delete stale token file so restart doesn't reuse it
@@ -217,6 +224,7 @@ public class KiteTickerService {
 
     private void processTicks(ArrayList<Tick> ticks) {
         if (ticks == null) return;
+        log.error("Process the ticks : {}", ticks);
         for (Tick kiteTick : ticks) {
             try {
                 long token = kiteTick.getInstrumentToken();
@@ -234,9 +242,9 @@ public class KiteTickerService {
                 try {
                     tickTime = (kiteTick.getTickTimestamp() != null)
                             ? kiteTick.getTickTimestamp()
-                                      .toInstant()
-                                      .atZone(ZoneId.of("Asia/Kolkata"))
-                                      .toLocalDateTime()
+                              .toInstant()
+                              .atZone(ZoneId.of("Asia/Kolkata"))
+                              .toLocalDateTime()
                             : LocalDateTime.now();
                 } catch (Exception e) {
                     tickTime = LocalDateTime.now();
