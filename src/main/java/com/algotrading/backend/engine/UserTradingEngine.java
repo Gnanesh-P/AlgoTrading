@@ -880,6 +880,11 @@ public class UserTradingEngine {
                 .trailingHighWatermark(session.getTrailingHighWatermark())
                 .squareOffEod(cfg.isSquareOffEod())
                 .paperTrade(cfg.getTradeMode() == TradeMode.PAPER)
+                // Active config summary — shown in UI header so user knows what's running
+                .entryStartTime(cfg.getStartCandleTime() != null ? cfg.getStartCandleTime().toString() : null)
+                .strikeMode(cfg.getStrikeMode() != null ? cfg.getStrikeMode().name() : null)
+                .lotQuantity(cfg.getLotQuantity())
+                .totalQuantity(cfg.getTotalQuantity())
                 .startTime(session.getStartTime())
                 .endTime(session.getEndTime())
                 .stopReason(session.getStopReason())

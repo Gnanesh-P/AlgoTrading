@@ -228,13 +228,18 @@ async function loadFuturesDropdown() {
     const sel = document.getElementById('cfg-futures');
     if (instruments && instruments.length > 0) {
       sel.innerHTML = instruments.map(i =>
-        `<option value="${i.tradingsymbol}" data-token="${i.instrumentToken || 0}" data-lot="${i.lotSize || 75}">
+        `<option value="${i.tradingsymbol}" data-token="${i.instrumentToken || 0}">
           ${i.tradingsymbol} (exp: ${i.expiry || '—'})
         </option>`
       ).join('');
-      // Pre-fill lot size from first instrument
-      const first = instruments[0];
-      if (first.lotSize) document.getElementById('cfg-lot-size').value = first.lotSize;
+
+      // Restore previously saved futures symbol so the dropdown shows what user last used
+      if (savedConfig && savedConfig.futureSymbol) {
+        const match = sel.querySelector(`option[value="${savedConfig.futureSymbol}"]`);
+        if (match) sel.value = savedConfig.futureSymbol;
+      }
+
+      // Capture token + load option chain for the selected instrument
       onFuturesChange();
     }
   } catch (_) { /* keep defaults */ }
@@ -296,9 +301,8 @@ function onFuturesChange() {
   const sel = document.getElementById('cfg-futures');
   const opt = sel.selectedOptions[0];
   futureToken = opt ? parseInt(opt.dataset.token || 0) : 0;
-  if (opt && opt.dataset.lot) {
-    document.getElementById('cfg-lot-size').value = opt.dataset.lot;
-  }
+  // NOTE: 'cfg-lot-size' element does NOT exist — we use 'cfg-lot-qty' (number of lots).
+  // Lot size is always 65 (fixed by NSE) and is NOT user-configurable.
   loadOptionChain();
 }
 
@@ -447,6 +451,21 @@ function renderSession(s) {
   stratBadge.textContent = 'Strategy: ' + status;
   stratBadge.className   = 'badge badge-' + status.toLowerCase().replace(/_/g, '');
 
+  // ---- Active Config Strip ----
+  // Show a compact pill row so the user always knows what params are running
+  const strip = document.getElementById('active-config-strip');
+  if (strip) {
+    strip.classList.remove('hidden');
+    const setText = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
+    setText('cfg-chip-future', s.futureSymbol || '—');
+    setText('cfg-chip-time',   s.entryStartTime ? '⏱ ' + s.entryStartTime : '—');
+    setText('cfg-chip-target', 'Target ₹' + fmt(s.targetPnL || 0));
+    setText('cfg-chip-sl',     'SL ₹'     + fmt(s.stopLossPoints || 0));
+    setText('cfg-chip-lots',   (s.lotQuantity || 1) + ' lot × 65 = ' + (s.totalQuantity || 65) + ' qty');
+    setText('cfg-chip-mode',   s.paperTrade ? '📄 Paper' : '🔴 Live');
+    setText('cfg-chip-strike', s.strikeMode === 'AUTO_ATM' ? '🎯 Auto ATM' : '✋ Manual Strike');
+  }
+
   // ---- State chip ----
   const stateEl = document.getElementById('s-state');
   stateEl.textContent = status;
@@ -499,9 +518,11 @@ function renderSession(s) {
   }
 
   // ---- Candles ----
-  renderCandle(s.firstCandle,  'c1');
-  renderCandle(s.secondCandle, 'c2');
-  renderCandle(s.thirdCandle,  'c3');
+  // Always call renderCandle even when null so boxes clear on new-session / restart.
+  // renderCandle handles null by resetting to '—'.
+  renderCandle(s.firstCandle  || null, 'c1');
+  renderCandle(s.secondCandle || null, 'c2');
+  renderCandle(s.thirdCandle  || null, 'c3');
 
   // ---- P&L ----
   const realized = s.cumulativePnL          || 0;
@@ -575,19 +596,25 @@ function renderSession(s) {
 
 /**
  * Render a CandleInfo {close, time} into candle boxes.
+ * When candle is null (not yet captured), clears the box so stale data from
+ * a previous session never lingers on screen after a restart.
  */
 function renderCandle(candle, prefix) {
-  if (!candle) return;
   const closeEl = document.getElementById(prefix + '-close');
   const timeEl  = document.getElementById(prefix + '-time');
+  if (!candle) {
+    // Clear — no candle captured yet for this session
+    if (closeEl) closeEl.textContent = '—';
+    if (timeEl)  timeEl.textContent  = '';
+    return;
+  }
   if (closeEl) closeEl.textContent = fmt(candle.close);
   if (timeEl)  timeEl.textContent  = candle.time || '';
 }
 
 /**
  * Render HistoryRow[] into the trade legs table.
- * HistoryRow: {legNumber, position, symbol, entryPrice, exitPrice,
- *              pnlPoints, pnlAmount, entryTime, exitTime, exitReason}
+ * Columns: # | Type | Entry Price | Entry Time | Exit Price | P&L (₹) | Reason/Status
  */
 function renderHistory(rows) {
   const tbody = document.getElementById('legs-body');
@@ -596,32 +623,35 @@ function renderHistory(rows) {
     return;
   }
 
-  tbody.innerHTML = rows.map(row => {
-    const isOpen   = row.exitReason === 'OPEN';
-    const pnl      = row.pnlAmount || 0;
-    const pnlClass = pnl >= 0 ? 'pnl-positive' : 'pnl-negative';
-    const typeTag  = `<span class="tag-${(row.position || '').toLowerCase()}">${row.position}</span>`;
-    const statusTag = isOpen
-      ? `<span class="tag-open">Open</span>`
-      : `<span class="tag-closed">Closed</span>`;
+  tbody.innerHTML = rows.map((row, idx) => {
+    const isOpen    = row.exitReason === 'OPEN';
+    const pnl       = row.pnlAmount || 0;
+    const pnlClass  = pnl >= 0 ? 'pnl-positive' : 'pnl-negative';
+    const typeTag   = `<span class="tag-${(row.position || '').toLowerCase()}">${row.position}</span>`;
 
-    return `<tr>
-      <td>${row.legNumber}</td>
-      <td>${typeTag}</td>
-      <td>
-        <span class="monospace">₹${fmt(row.entryPrice)}</span>
-        <br><small>${formatTime(row.entryTime)}</small>
-      </td>
+    // Highlight new leg after a reversal (all legs after leg 1)
+    const isReversal   = !isOpen && row.exitReason && row.exitReason.startsWith('REVERSAL');
+    const rowStyle     = isReversal ? ' style="border-left:3px solid #f59e0b;"' : '';
+    const openRowStyle = (isOpen && idx > 0) ? ' style="border-left:3px solid #3fb950;"' : '';
+
+    const reasonBadge = isOpen
+      ? `<span style="color:#3fb950;font-weight:600;font-size:11px;">⬤ OPEN</span>`
+      : `<span style="font-size:11px;color:var(--text2);">${row.exitReason || '—'}${row.exitTime ? '<br><small>' + formatTime(row.exitTime) + '</small>' : ''}</span>`;
+
+    return `<tr${isOpen ? openRowStyle : rowStyle}>
+      <td style="font-weight:700;">${row.legNumber}</td>
+      <td>${typeTag}<br><span style="font-size:10px;color:var(--text2);">${row.symbol || ''}</span></td>
+      <td class="monospace">₹${fmt(row.entryPrice)}</td>
+      <td style="font-size:11px;color:var(--text2);">${formatTime(row.entryTime)}</td>
       <td>${isOpen
-        ? '<span style="color:var(--text2)">Open</span>'
-        : `<span class="monospace">₹${fmt(row.exitPrice)}</span><br><small>${formatTime(row.exitTime)}</small>`
+        ? '<span style="color:var(--text2);font-size:12px;">—</span>'
+        : `<span class="monospace">₹${fmt(row.exitPrice)}</span>`
       }</td>
-      <td class="${pnlClass}" style="font-weight:600;font-family:monospace">
-        ${pnl >= 0 ? '+' : ''}₹${fmt(pnl)}
-        <br><small style="font-weight:400">${isOpen ? '' : fmt(row.pnlPoints) + ' pts'}</small>
+      <td class="${isOpen ? '' : pnlClass}" style="font-weight:700;font-family:monospace">
+        ${isOpen ? '<span style="color:var(--text2)">—</span>' : (pnl >= 0 ? '+' : '') + '₹' + fmt(pnl)}
+        ${!isOpen && row.pnlPoints ? `<br><small style="font-weight:400;color:var(--text2)">${fmt(row.pnlPoints)} pts</small>` : ''}
       </td>
-      <td><small>${row.exitReason || '—'}</small></td>
-      <td>${statusTag}</td>
+      <td>${reasonBadge}</td>
     </tr>`;
   }).join('');
 }

@@ -5,7 +5,9 @@ import com.algotrading.backend.dto.AlgoStatusResponse;
 import com.algotrading.backend.engine.TradingEngineRegistry;
 import com.algotrading.backend.engine.UserTradingEngine;
 import com.algotrading.backend.model.*;
+import com.algotrading.backend.service.CandleAggregatorService;
 import com.algotrading.backend.service.KiteInstrumentService;
+import com.algotrading.backend.service.KiteTickerService;
 import com.algotrading.backend.service.UserRegistryService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -43,9 +45,12 @@ import java.util.Map;
 @Slf4j
 public class AlgoController {
 
-    private final TradingEngineRegistry  engineRegistry;
-    private final UserRegistryService    userRegistry;
-    private final KiteInstrumentService  kiteInstrumentService;
+    private final TradingEngineRegistry   engineRegistry;
+    private final UserRegistryService     userRegistry;
+    private final KiteInstrumentService   kiteInstrumentService;
+    // Needed to forward ticks to MarketDataService so the engine receives them
+    private final KiteTickerService       tickerService;
+    private final CandleAggregatorService candleAggregator;
 
     // ── Start ─────────────────────────────────────────────────────────────────
 
@@ -144,7 +149,30 @@ public class AlgoController {
             log.warn("[{}] No instruments subscribed — candle ticks will not arrive!", startedBy);
         }
 
-        // ── 5. Get the PlatformUser (or create a transient one for the admin) ─
+        // ── 5. Clean slate — reset forming candles + global KiteTicker subs ───
+        //
+        // WHY THIS IS CRITICAL:
+        //   The global KiteTickerService.processTicks() has a token→symbol map.
+        //   If a token is NOT in that map, the tick is silently dropped with
+        //   "unknown token, skipping" BEFORE it ever reaches MarketDataService.
+        //   MarketDataService routes ticks to paper-mode engines via
+        //   routeTickToPaperEngines(). If ticks never reach MarketDataService,
+        //   the engine receives NOTHING — no candle closes, no SL checks.
+        //
+        //   Calling tickerService.subscribe(instruments) registers the token→symbol
+        //   mapping in the global ticker so ticks ARE forwarded to MarketDataService,
+        //   which then routes them to the engine.  LIVE-mode engines receive ticks
+        //   directly from their own per-user KiteTicker (inside UserTradingEngine),
+        //   but the global subscription still provides LTP for the status UI.
+        candleAggregator.resetAll();       // clear any forming candles from previous session
+        tickerService.unsubscribeAll();    // remove stale subscriptions from previous session
+        if (!instruments.isEmpty()) {
+            tickerService.subscribe(instruments);   // register tokens so ticks flow through
+            log.info("[{}] Global KiteTicker subscribed {} instruments: {}",
+                    startedBy, instruments.size(), instruments.values());
+        }
+
+        // ── 6. Get the PlatformUser (or create a transient one for the admin) ─
         PlatformUser user = platformUserOpt.orElseGet(() ->
                 PlatformUser.builder()
                         .username(startedBy)
@@ -154,7 +182,7 @@ public class AlgoController {
                         .build()
         );
 
-        // ── 6. Start engine ───────────────────────────────────────────────────
+        // ── 7. Start engine ───────────────────────────────────────────────────
         UserTradingEngine engine = engineRegistry.startEngine(user, config, instruments, startedBy);
         TradeSession session = engine.getSession();
         log.info("[{}] Engine started. sessionId={}", startedBy, session.getSessionId());

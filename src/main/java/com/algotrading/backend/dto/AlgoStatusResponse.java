@@ -34,6 +34,11 @@ public class AlgoStatusResponse {
     private double  trailingHighWatermark;
     private boolean squareOffEod;
     private boolean paperTrade;
+    // Active config summary (displayed at top of UI so user knows what's running)
+    private String  entryStartTime;      // "09:50" — start candle time
+    private String  strikeMode;          // "MANUAL" | "AUTO_ATM"
+    private int     lotQuantity;         // number of lots (1 lot = 65 qty)
+    private int     totalQuantity;       // lotQuantity × 65
     private LocalDateTime startTime;
     private LocalDateTime endTime;
     private String  stopReason;

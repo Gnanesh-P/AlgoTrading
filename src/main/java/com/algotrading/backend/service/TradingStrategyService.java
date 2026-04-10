@@ -467,6 +467,13 @@ public class TradingStrategyService {
         openLeg.setPnl(legPnl);
         session.setCumulativePnL(session.getCumulativePnL() + legPnl);
 
+        // CRITICAL: reset openPnL to 0 immediately after exit.
+        // Without this, getTotalPnL() = getTotalRealizedPnL() + stale-openPnL
+        // which DOUBLE-COUNTS the leg P&L (the realized leg is now in cumulativePnL,
+        // AND the old openPnL still holds the same value from updateOpenPnL() earlier).
+        // isPnLExitTriggered() and checkExitConditions() must see the correct total.
+        session.setOpenPnL(0);
+
         log.info("Exited position: leg={}, type={}, exit={}, legPnL={}, cumulativePnL={}, reason={}",
                 openLeg.getLegNumber(), openLeg.getOptionType(), exitPrice,
                 legPnl, session.getCumulativePnL(), reason);

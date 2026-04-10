@@ -197,6 +197,17 @@
         </div>
       </div>
 
+      <!-- ACTIVE CONFIG STRIP (shown only when strategy is running/stopped) -->
+      <div id="active-config-strip" class="active-config-strip hidden">
+        <div class="cfg-chip" id="cfg-chip-future">—</div>
+        <div class="cfg-chip cfg-chip-time" id="cfg-chip-time">—</div>
+        <div class="cfg-chip cfg-chip-target" id="cfg-chip-target">Target —</div>
+        <div class="cfg-chip cfg-chip-sl" id="cfg-chip-sl">SL —</div>
+        <div class="cfg-chip" id="cfg-chip-lots">— lot</div>
+        <div class="cfg-chip" id="cfg-chip-mode">—</div>
+        <div class="cfg-chip" id="cfg-chip-strike">—</div>
+      </div>
+
       <!-- SESSION STATUS -->
       <div class="status-section">
         <div class="status-row">
@@ -313,11 +324,11 @@
             <tr>
               <th>#</th>
               <th>Type</th>
-              <th>Entry</th>
-              <th>Exit</th>
-              <th>P&L</th>
-              <th>Reason</th>
-              <th>Status</th>
+              <th>Entry Price</th>
+              <th>Entry Time</th>
+              <th>Exit Price</th>
+              <th>P&L (₹)</th>
+              <th>Reason / Status</th>
             </tr>
           </thead>
           <tbody id="legs-body">

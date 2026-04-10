@@ -10,7 +10,8 @@
       "Bash(ls -la target/*.jar)",
       "Bash(cd /tmp)",
       "Bash(unzip -q /c/Users/GOWTHAM/.m2/repository/com/zerodhatech/kiteconnect/kiteconnect/4.0.0/kiteconnect-4.0.0-sources.jar)",
-      "Bash(mvn clean:*)"
+      "Bash(mvn clean:*)",
+      "Bash(cmd /c \"mvn clean compile -q 2>&1\")"
     ]
   }
 }
