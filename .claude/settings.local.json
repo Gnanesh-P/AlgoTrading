@@ -19,7 +19,10 @@
       "Bash(./mvnw compile:*)",
       "Bash(ls D:/AlgoTradingBackend/*.cmd)",
       "Bash(ls D:/AlgoTradingBackend/mvnw*)",
-      "Bash(JAVA_HOME='/c/Program Files/Eclipse Adoptium/jdk-17.0.15.6-hotspot' mvn -f D:/AlgoTradingBackend/pom.xml compile -q)"
+      "Bash(JAVA_HOME='/c/Program Files/Eclipse Adoptium/jdk-17.0.15.6-hotspot' mvn -f D:/AlgoTradingBackend/pom.xml compile -q)",
+      "Bash(export JAVA_HOME=\"C:\\\\Program Files\\\\Eclipse Adoptium\\\\jdk-17.0.14.7-hotspot\")",
+      "Bash(where java:*)",
+      "Bash(export JAVA_HOME=\"C:/Program Files/Eclipse Adoptium/jdk-17.0.15.6-hotspot\")"
     ]
   }
 }

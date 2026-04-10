@@ -61,6 +61,10 @@ function init() {
     lotQtyEl.addEventListener('input', updateQtyDisplay);
     updateQtyDisplay();
   }
+  // Fetch status immediately so buttons reflect the real state right away.
+  // Without this, both buttons sit in default state for the first 3-second poller tick.
+  setStrategyButtonsLoading(true);
+  fetchAndRenderStatus();
 }
 
 /** Show how many units will be ordered (lots × 65) */
@@ -150,6 +154,12 @@ function logout() {
   if (wsClient)     wsClient.close();
   if (pricePoller)  clearInterval(pricePoller);
   if (statusPoller) clearInterval(statusPoller);
+  // Freeze the UI immediately so any in-flight fetch can't re-enable buttons
+  // before the page redirect completes.
+  const s = document.getElementById('btn-start');
+  const e = document.getElementById('btn-stop');
+  if (s) s.disabled = true;
+  if (e) e.disabled = true;
   window.location.href = '/';
 }
 
@@ -190,6 +200,7 @@ async function connectKite() {
 async function setManualToken() {
   const t = document.getElementById('manual-token').value.trim();
   if (!t) return;
+  await withBtnLoad('btn-set-token', '⏳ Saving...', async () => {
   try {
     // Single endpoint — saves per-user token AND updates global Kite connection + WebSocket
     await post('/api/kite/my-access-token', { accessToken: t });
@@ -200,6 +211,7 @@ async function setManualToken() {
   } catch (e) {
     showMsg('config-msg', '❌ Failed to set token: ' + e.message, 'error');
   }
+  }); // end withBtnLoad
 }
 
 async function refreshKiteStatus() {
@@ -410,12 +422,11 @@ async function startStrategy() {
   // Auto-build request from current form values if saveConfig wasn't called
   if (!savedConfig) await saveConfig();
 
+  setStrategyButtonsLoading(true);
   try {
     await post('/algo/start', savedConfig);
     showMsg('config-msg', '▶️ Strategy started!', 'success');
-    document.getElementById('btn-start').disabled = true;
-    document.getElementById('btn-stop').disabled  = false;
-    fetchAndRenderStatus();
+    fetchAndRenderStatus();  // clears loading + sets correct button states
   } catch (e) {
     const msg = e.message || 'Start failed';
     // 409 = another user's session is already running
@@ -423,7 +434,8 @@ async function startStrategy() {
     showMsg('config-msg',
       isConflict ? '⚠️ ' + msg : '❌ ' + msg,
       isConflict ? 'info' : 'error');
-    if (isConflict) fetchAndRenderStatus(); // refresh to show who owns the session
+    // Let fetchAndRenderStatus decide the definitive state in all error cases
+    fetchAndRenderStatus();
   }
 }
 
@@ -431,13 +443,13 @@ async function startStrategy() {
  * Stop the algo — POST /algo/stop
  */
 async function stopStrategy() {
+  setStrategyButtonsLoading(true);
   try {
     await post('/algo/stop', {});
-    document.getElementById('btn-start').disabled = false;
-    document.getElementById('btn-stop').disabled  = true;
-    fetchAndRenderStatus();
+    fetchAndRenderStatus();  // clears loading + sets correct button states
   } catch (e) {
     showMsg('config-msg', '❌ ' + (e.message || 'Stop failed'), 'error');
+    fetchAndRenderStatus();  // re-sync state (stop may have partially succeeded)
   }
 }
 
@@ -450,13 +462,20 @@ function startStatusPoller() {
 }
 
 async function fetchAndRenderStatus() {
+  if (!token) return;   // user logged out — don't touch the UI
   try {
     const session = await get('/algo/status');
+    // Clear loading state FIRST (resets disabled to defaults: Start on, Stop off).
+    // renderSession then overrides disabled correctly based on actual session data.
+    setStrategyButtonsLoading(false);
     if (session) {
       currentSession = session;
       renderSession(session);
     }
-  } catch (_) {}
+  } catch (_) {
+    // On network error fall back to defaults so buttons are never stuck disabled.
+    setStrategyButtonsLoading(false);
+  }
 }
 
 // ============================================================
@@ -846,6 +865,63 @@ function updateFooter(mode) {
     'Mode: ' + (mode === 'LIVE' ? '🔴 LIVE' : '📄 PAPER');
 }
 
+// ============================================================
+// LOADING STATE HELPERS
+// ============================================================
+
+/**
+ * Put BOTH strategy buttons into a unified "loading" state while waiting
+ * for the initial status fetch (or Start/Stop API calls).
+ * renderSession() will set the correct enabled/disabled state once data arrives.
+ */
+function setStrategyButtonsLoading(loading) {
+  const startBtn = document.getElementById('btn-start');
+  const stopBtn  = document.getElementById('btn-stop');
+  if (!startBtn || !stopBtn) return;
+
+  if (loading) {
+    startBtn.disabled = true;
+    stopBtn.disabled  = true;
+    startBtn.dataset.origHtml = startBtn.innerHTML;
+    stopBtn.dataset.origHtml  = stopBtn.innerHTML;
+    startBtn.innerHTML = '<span class="btn-spinner"></span> Loading…';
+    stopBtn.innerHTML  = '<span class="btn-spinner"></span> Loading…';
+  } else {
+    // Restore original labels
+    if (startBtn.dataset.origHtml) startBtn.innerHTML = startBtn.dataset.origHtml;
+    if (stopBtn.dataset.origHtml)  stopBtn.innerHTML  = stopBtn.dataset.origHtml;
+    // Reset disabled to safe defaults: Start enabled, Stop disabled.
+    // If renderSession() is called right after this it will override with the correct state.
+    startBtn.disabled = false;
+    stopBtn.disabled  = true;
+  }
+}
+
+/**
+ * Run an async function while showing a spinner on a specific button.
+ * Restores the original label when done (success or error).
+ * @param {string}   btnId  - element id of the button
+ * @param {string}   label  - text to show while loading (e.g. '⏳ Saving…')
+ * @param {Function} fn     - async function to execute
+ */
+async function withBtnLoad(btnId, label, fn) {
+  const btn = document.getElementById(btnId);
+  let origHtml = null;
+  if (btn) {
+    origHtml = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = `<span class="btn-spinner"></span> ${label}`;
+  }
+  try {
+    return await fn();
+  } finally {
+    if (btn) {
+      btn.innerHTML = origHtml;
+      btn.disabled  = false;
+    }
+  }
+}
+
 function showMsg(id, msg, type) {
   const el = document.getElementById(id);
   if (!el) return;
@@ -853,4 +929,46 @@ function showMsg(id, msg, type) {
   el.className   = 'msg-box msg-' + type;
   el.classList.remove('hidden');
   if (type === 'success') setTimeout(() => el.classList.add('hidden'), 5000);
+  // Mirror errors, warnings and important info as toast popups visible anywhere on the page
+  if (type === 'error' || type === 'warning') showToast(msg, type);
+  else if (type === 'info') showToast(msg, 'info', 5000);
+}
+
+/**
+ * Show a floating toast notification in the top-right corner.
+ * type: 'error' | 'success' | 'info' | 'warning'
+ * duration: auto-dismiss after N ms (0 = manual dismiss only)
+ */
+function showToast(msg, type = 'error', duration = 6000) {
+  const container = document.getElementById('toast-container');
+  if (!container) return;
+
+  const icons = { error: '❌', success: '✅', info: 'ℹ️', warning: '⚠️' };
+  const icon  = icons[type] || '❌';
+
+  const toast = document.createElement('div');
+  toast.className = `toast toast-${type}`;
+  toast.innerHTML = `
+    <span class="toast-icon">${icon}</span>
+    <span class="toast-body" style="flex:1">${escapeHtml(msg)}</span>
+    <span class="toast-close" title="Dismiss">✕</span>`;
+
+  const dismiss = () => {
+    toast.classList.add('toast-hiding');
+    toast.addEventListener('animationend', () => toast.remove(), { once: true });
+  };
+
+  toast.querySelector('.toast-close').addEventListener('click', dismiss);
+  toast.addEventListener('click', dismiss);   // click anywhere on toast to dismiss
+  container.appendChild(toast);
+
+  if (duration > 0) setTimeout(dismiss, duration);
+}
+
+function escapeHtml(str) {
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
 }

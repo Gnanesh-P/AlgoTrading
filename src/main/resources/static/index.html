@@ -55,7 +55,7 @@
       <button class="btn btn-warning" onclick="connectKite()">Connect via OAuth</button>
       <span style="color:#888;font-size:12px;">OR paste token:</span>
       <input type="text" id="manual-token" placeholder="Kite Access Token" class="input-sm"/>
-      <button class="btn btn-sm btn-outline" onclick="setManualToken()">Set Token</button>
+      <button id="btn-set-token" class="btn btn-sm btn-outline" onclick="setManualToken()">Set Token</button>
     </div>
   </div>
 
@@ -354,6 +354,9 @@
   </footer>
 
 </div><!-- end dashboard -->
+
+<!-- TOAST NOTIFICATION CONTAINER -->
+<div id="toast-container"></div>
 
 <script src="/js/app.js"></script>
 </body>

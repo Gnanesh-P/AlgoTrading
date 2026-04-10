@@ -1,5 +1,6 @@
 package com.algotrading.backend.service;
 
+import com.algotrading.backend.config.AppCredentialsProperties;
 import com.algotrading.backend.model.PlatformUser;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -35,14 +36,17 @@ public class UserRegistryService {
     private String usersFilePath;
 
     private final PasswordEncoder passwordEncoder;
+    private final AppCredentialsProperties ymlCredentials;
     private final ObjectMapper mapper;
     private final ReadWriteLock lock = new ReentrantReadWriteLock();
 
     // In-memory copy — load once, write-through on mutations
     private List<PlatformUser> users = new ArrayList<>();
 
-    public UserRegistryService(PasswordEncoder passwordEncoder) {
-        this.passwordEncoder = passwordEncoder;
+    public UserRegistryService(PasswordEncoder passwordEncoder,
+                               AppCredentialsProperties ymlCredentials) {
+        this.passwordEncoder  = passwordEncoder;
+        this.ymlCredentials   = ymlCredentials;
         this.mapper = new ObjectMapper();
         this.mapper.registerModule(new JavaTimeModule());
         this.mapper.findAndRegisterModules();
@@ -53,7 +57,7 @@ public class UserRegistryService {
         File file = new File(usersFilePath);
         if (!file.exists()) {
             file.getParentFile().mkdirs();
-            createDefaultAdmin(file);
+            seedFromYml(file);
         } else {
             load(file);
         }
@@ -195,21 +199,62 @@ public class UserRegistryService {
         }
     }
 
-    private void createDefaultAdmin(File file) {
-        log.info("users.json not found — creating default admin at {}", file.getAbsolutePath());
-        PlatformUser admin = PlatformUser.builder()
-                .id(UUID.randomUUID().toString())
-                .username("admin")
-                .passwordHash(passwordEncoder.encode("admin123"))
-                .role("ADMIN")
-                .enabled(true)
-                .maxLotSize(10)
-                .planExpiryDate(LocalDate.of(2099, 12, 31))
-                .notes("Default admin — change password immediately!")
-                .createdAt(LocalDateTime.now())
-                .updatedAt(LocalDateTime.now())
-                .build();
-        users.add(admin);
+    /**
+     * First-run seed: create users.json from the yaml credentials list.
+     * The first entry (APP_USERNAME / admin) gets ADMIN role.
+     * All other entries get TRADER role.
+     * This ensures existing yaml-based users keep working after migrating to users.json auth.
+     */
+    private void seedFromYml(File file) {
+        log.info("users.json not found — seeding from yml credentials at {}", file.getAbsolutePath());
+
+        List<AppCredentialsProperties.UserEntry> entries = ymlCredentials.getUsers().stream()
+                .filter(AppCredentialsProperties.UserEntry::isValid)
+                .toList();
+
+        if (entries.isEmpty()) {
+            // No yml users defined — create hardcoded fallback admin
+            entries = List.of(); // handled below
+        }
+
+        boolean firstEntry = true;
+        for (AppCredentialsProperties.UserEntry entry : entries) {
+            String role = firstEntry ? "ADMIN" : "TRADER";
+            firstEntry = false;
+            PlatformUser user = PlatformUser.builder()
+                    .id(UUID.randomUUID().toString())
+                    .username(entry.getUsername())
+                    .passwordHash(passwordEncoder.encode(entry.getPassword()))
+                    .role(role)
+                    .enabled(true)
+                    .maxLotSize(role.equals("ADMIN") ? 10 : 1)
+                    .planExpiryDate(LocalDate.of(2099, 12, 31))
+                    .notes(role.equals("ADMIN") ? "Admin account (seeded from yml)" : "Seeded from yml")
+                    .createdAt(LocalDateTime.now())
+                    .updatedAt(LocalDateTime.now())
+                    .build();
+            users.add(user);
+            log.info("Seeded user: {} (role={})", user.getUsername(), role);
+        }
+
+        // Always ensure at least one admin exists
+        if (users.stream().noneMatch(u -> "ADMIN".equals(u.getRole()))) {
+            PlatformUser admin = PlatformUser.builder()
+                    .id(UUID.randomUUID().toString())
+                    .username("admin")
+                    .passwordHash(passwordEncoder.encode("admin123"))
+                    .role("ADMIN")
+                    .enabled(true)
+                    .maxLotSize(10)
+                    .planExpiryDate(LocalDate.of(2099, 12, 31))
+                    .notes("Default admin — change password immediately!")
+                    .createdAt(LocalDateTime.now())
+                    .updatedAt(LocalDateTime.now())
+                    .build();
+            users.add(admin);
+            log.info("Created fallback default admin");
+        }
+
         persist();
     }
 }

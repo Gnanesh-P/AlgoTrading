@@ -142,10 +142,14 @@ public class KiteController {
     /** Get Kite connection status */
     @GetMapping("/status")
     public ResponseEntity<Map<String, Object>> getStatus() {
+        boolean tokenPresent = kiteProperties.isConnected();
+        boolean tickerActive = tickerService.isActive();
+        // "connected" = token is present AND ticker WebSocket is up
+        // Use tokenPresent alone to decide if REST calls (instruments, LTP) will work
         return ResponseEntity.ok(Map.of(
-                "connected", kiteProperties.isConnected(),
-                "apiKey", kiteProperties.getApiKey(),
-                "tickerActive", tickerService.isActive(),
+                "connected",             tokenPresent,
+                "tickerActive",          tickerActive,
+                "apiKey",                kiteProperties.getApiKey() != null ? kiteProperties.getApiKey() : "",
                 "subscribedInstruments", tickerService.getSubscribedInstruments()
         ));
     }

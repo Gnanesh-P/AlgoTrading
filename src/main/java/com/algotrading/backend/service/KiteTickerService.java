@@ -55,8 +55,24 @@ public class KiteTickerService {
     }
 
     private void initAndConnect() {
+        String token  = kite.getAccessToken();
+        String apiKey = kite.getApiKey();
+        log.info("KiteTicker init — apiKey={} tokenPresent={} tokenPrefix={}",
+                apiKey,
+                token != null && !token.isBlank(),
+                token != null && token.length() > 6 ? token.substring(0, 6) + "…" : "N/A");
+
+        if (token == null || token.isBlank()) {
+            log.warn("KiteTicker: no access token — skipping WebSocket connect");
+            return;
+        }
+        if (apiKey == null || apiKey.isBlank()) {
+            log.warn("KiteTicker: no API key — skipping WebSocket connect");
+            return;
+        }
+
         try {
-            ticker = new KiteTicker(kite.getAccessToken(), kite.getApiKey());
+            ticker = new KiteTicker(token, apiKey);
             ticker.setTryReconnection(true);
             ticker.setMaximumRetries(10);
             ticker.setMaximumRetryInterval(30);
@@ -101,14 +117,20 @@ public class KiteTickerService {
     }
 
     private void handleTickerError(String msg) {
+        log.error("KiteTicker error received: [{}]", msg);
         if (msg != null && (msg.contains("403") || msg.contains("Forbidden"))) {
-            log.error("KiteTicker: 403 Forbidden — access token expired or invalid. " +
-                      "Stopping reconnection. Please set a fresh token via the UI.");
-            kite.setAccessToken(null);   // clears isConnected() → UI banner reappears
-            tokenStore.clear();          // delete stale file so restart doesn't reuse it
-            disconnectExisting();        // stops KiteTicker's internal reconnect timer
+            log.error("KiteTicker: 403 Forbidden — token is expired or doesn't match the API key. " +
+                      "REST polling fallback will provide ticks. Set a fresh token via the UI.");
+            // Do NOT clear kite.accessToken — REST calls still need it.
+            // REST polling will activate automatically since tickerActive = false.
+            tokenStore.clear();    // delete stale token file so restart doesn't reuse it
+            disconnectExisting();  // stop the reconnect loop
+        } else if (msg != null && msg.contains("401")) {
+            log.error("KiteTicker: 401 Unauthorized — invalid token. Stopping reconnect loop.");
+            tokenStore.clear();
+            disconnectExisting();
         } else {
-            log.warn("KiteTicker error: {}", msg);
+            log.warn("KiteTicker non-fatal error (will retry): {}", msg);
         }
     }
 
