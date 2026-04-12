@@ -2,10 +2,7 @@ package com.algotrading.backend.engine;
 
 import com.algotrading.backend.cache.MarketDataCache;
 import com.algotrading.backend.model.*;
-import com.algotrading.backend.service.KiteInstrumentService;
-import com.algotrading.backend.service.OptionInstrumentService;
-import com.algotrading.backend.service.SessionPersistenceService;
-import com.algotrading.backend.service.UserRegistryService;
+import com.algotrading.backend.service.*;
 import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -44,6 +41,7 @@ public class TradingEngineRegistry {
     private final SimpMessagingTemplate   messagingTemplate;
     private final SessionPersistenceService sessionPersistence;
     private final UserRegistryService     userRegistry;
+    private final TelegramService telegramService;
 
     // ═══════════════════════════════════════════════════════════════════════
     //  CRASH RECOVERY
@@ -172,7 +170,7 @@ public class TradingEngineRegistry {
 
     /** Build a new engine wired with shared dependencies for the given user. */
     private UserTradingEngine buildEngine(PlatformUser user) {
-        return new UserTradingEngine(
+        return new UserTradingEngine( telegramService,
                 user,
                 globalCache,
                 optionInstrumentService,

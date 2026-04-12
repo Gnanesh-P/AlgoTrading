@@ -6,6 +6,7 @@ import com.algotrading.backend.model.*;
 import com.algotrading.backend.service.KiteInstrumentService;
 import com.algotrading.backend.service.OptionInstrumentService;
 import com.algotrading.backend.service.SessionPersistenceService;
+import com.algotrading.backend.service.TelegramService;
 import com.zerodhatech.kiteconnect.KiteConnect;
 import com.zerodhatech.kiteconnect.kitehttp.exceptions.KiteException;
 import com.zerodhatech.kiteconnect.utils.Constants;
@@ -40,6 +41,7 @@ import java.util.stream.Collectors;
  */
 public class UserTradingEngine {
 
+    private final TelegramService telegramService;
     private static final Logger log = LoggerFactory.getLogger(UserTradingEngine.class);
 
     // ── Identity ──────────────────────────────────────────────────────────────
@@ -72,12 +74,13 @@ public class UserTradingEngine {
 
     // ─────────────────────────────────────────────────────────────────────────
 
-    public UserTradingEngine(PlatformUser platformUser,
+    public UserTradingEngine(TelegramService telegramService, PlatformUser platformUser,
                              MarketDataCache globalCache,
                              OptionInstrumentService optionInstrumentService,
                              KiteInstrumentService kiteInstrumentService,
                              SimpMessagingTemplate messagingTemplate,
                              SessionPersistenceService sessionPersistence) {
+        this.telegramService = telegramService;
         this.platformUser          = platformUser;
         this.username              = platformUser.getUsername();
         this.globalCache           = globalCache;
@@ -358,11 +361,54 @@ public class UserTradingEngine {
      * @param instruments token→symbol map; already subscribed for LIVE, queued for PAPER
      * @param startedBy   JWT username of the requester (for audit)
      */
+
     public synchronized TradeSession startSession(TradingConfig config,
                                                    Map<Long, String> instruments,
                                                    String startedBy) {
         // Reset candle state
         formingCandles.clear();
+
+//        String startMsg = String.format(
+//                "🚀 *Strategy Started*\n" +
+//                        "User: `%s`\n" +
+//                        "Mode: `%s`\n" +
+//                        "Futures: `%s`\n" +
+//                        "Expiry: `%s`\n" +
+//                        "Lots: `%d`\n" +
+//                        "Qty: `%d`\n" +
+//                        "SL: `%.2f`\n" +
+//                        "Target: `%.2f`",
+//                username,
+//                config.getTradeMode(),
+//                config.getFuturesInstrument(),
+//                config.getExpiryType(),
+//                config.getLotQuantity(),
+//                config.getTotalQuantity(),
+//                config.getStopLoss(),
+//                config.getTargetProfit()
+//        );
+
+        String startMsg = String.format(
+                "🚀 <b>Strategy Started</b>\n" +
+                        "User: <code>%s</code>\n" +
+                        "Mode: <code>%s</code>\n" +
+                        "Futures: <code>%s</code>\n" +
+                        "Expiry: <code>%s</code>\n" +
+                        "Lots: <code>%d</code>\n" +
+                        "Qty: <code>%d</code>\n" +
+                        "SL: <code>%.2f</code>\n" +
+                        "Target: <code>%.2f</code>",
+                username,
+                config.getTradeMode(),
+                config.getFuturesInstrument(),
+                config.getExpiryType(),
+                config.getLotQuantity(),
+                config.getTotalQuantity(),
+                config.getStopLoss(),
+                config.getTargetProfit()
+        );
+        telegramService.sendStrategyMessage(startMsg);
+
 
         session = TradeSession.builder()
                 .sessionId(UUID.randomUUID().toString())
@@ -659,7 +705,19 @@ public class UserTradingEngine {
             session.setReversalCount(session.getReversalCount() + 1);
 
             if (isPnLExitTriggered()) return;
+            String msg = String.format(
+                    "🔄 <b>Position Reversed</b>\n" +
+                            "From: <code>%s</code>\n" +
+                            "To: <code>%s</code>\n" +
+                            "Current Close: <code>%.2f</code>\n" +
+                            "First Close: <code>%.2f</code>",
+                    openLeg.getOptionType(),
+                    newDir,
+                    currentClose,
+                    firstClose
+            );
 
+            telegramService.sendStrategyMessage(msg);
             enterPosition(newDir, "REVERSAL_" + session.getReversalCount());
         }
 
@@ -696,6 +754,23 @@ public class UserTradingEngine {
 
         session.setCurrentLegNumber(leg.getLegNumber());
         session.getTradeLegs().add(leg);
+        String msg = String.format(
+                "✅ <b>Position Entered</b>\n" +
+                        "Type: <code>%s</code>\n" +
+                        "Instrument: <code>%s</code>\n" +
+                        "Strike: <code>%d</code>\n" +
+                        "Price: <code>%.2f</code>\n" +
+                        "Qty: <code>%d</code>\n" +
+                        "Reason: <code>%s</code>",
+                optionType,
+                instrument,
+                strikePrice,
+                entryPrice,
+                leg.getQuantity(),
+                reason
+        );
+
+        telegramService.sendStrategyMessage(msg);
         log.info("[{}] Entered leg={} type={} instrument={} entry={} reason={}",
                 username, leg.getLegNumber(), optionType, instrument, entryPrice, reason);
     }
@@ -724,6 +799,25 @@ public class UserTradingEngine {
         log.info("[{}] Exited leg={} type={} exit={} legPnL={} cumPnL={} reason={}",
                 username, openLeg.getLegNumber(), openLeg.getOptionType(),
                 exitPrice, legPnl, session.getCumulativePnL(), reason);
+        double profitLoss = (exitPrice - openLeg.getEntryPrice()) * openLeg.getQuantity();
+
+        String msg = String.format(
+                "🔚 <b>Position Exited</b>\n" +
+                        "Type: <code>%s</code>\n" +
+                        "Instrument: <code>%s</code>\n" +
+                        "Entry: <code>%.2f</code>\n" +
+                        "Exit: <code>%.2f</code>\n" +
+                        "P/L: <code>%.2f</code>\n" +
+                        "Reason: <code>%s</code>",
+                openLeg.getOptionType(),
+                openLeg.getInstrument(),
+                openLeg.getEntryPrice(),
+                exitPrice,
+                profitLoss,
+                reason
+        );
+
+        telegramService.sendStrategyMessage(msg);
     }
 
     private void updateOpenPnL() {
