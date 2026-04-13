@@ -32,7 +32,7 @@ import java.util.concurrent.locks.ReentrantReadWriteLock;
 @Slf4j
 public class UserRegistryService {
 
-    @Value("${app.users-file:./data/users.json}")
+    @Value("${app.users-file:/data/users.json}")
     private String usersFilePath;
 
     private final PasswordEncoder passwordEncoder;
