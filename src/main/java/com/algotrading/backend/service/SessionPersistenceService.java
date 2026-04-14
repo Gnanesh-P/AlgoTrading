@@ -40,7 +40,7 @@ import java.util.Optional;
 @Slf4j
 public class SessionPersistenceService {
 
-    @Value("${app.session-file:/data/session.json}")
+    @Value("${app.session-file:/app/data/session.json}")
     private String sessionFilePath;
 
     private final ObjectMapper mapper;
@@ -104,7 +104,7 @@ public class SessionPersistenceService {
     // ────────────────────────────────────────────────────────────────────────
 
     private File userSessionFile(String username) {
-        return new File("/data/sessions/" + sanitize(username) + ".json");
+        return new File("/app/data/sessions/" + sanitize(username) + ".json");
     }
 
     /** Sanitise username so it is safe to use as a file-name component. */
@@ -154,7 +154,7 @@ public class SessionPersistenceService {
      * Used by TradingEngineRegistry.recoverAllSessions() on startup.
      */
     public java.util.List<String> findAllPersistedUsernames() {
-        File dir = new File("/data/sessions");
+        File dir = new File("/app/data/sessions");
         if (!dir.exists() || !dir.isDirectory()) return java.util.List.of();
         File[] files = dir.listFiles((d, name) -> name.endsWith(".json"));
         if (files == null) return java.util.List.of();

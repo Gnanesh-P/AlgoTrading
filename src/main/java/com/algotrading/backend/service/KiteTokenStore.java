@@ -34,7 +34,7 @@ import java.util.Optional;
 @Slf4j
 public class KiteTokenStore {
 
-    @Value("${app.kite-token-file:/data/kite-access-token.txt}")
+    @Value("${app.kite-token-file:/app/data/kite-access-token.txt}")
     private String tokenFilePath;
 
     /**

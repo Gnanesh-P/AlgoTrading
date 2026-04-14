@@ -32,7 +32,7 @@ import java.util.concurrent.locks.ReentrantReadWriteLock;
 @Slf4j
 public class UserRegistryService {
 
-    @Value("${app.users-file:/data/users.json}")
+    @Value("${app.users-file:/app/data/users.json}")
     private String usersFilePath;
 
     private final PasswordEncoder passwordEncoder;
@@ -194,6 +194,7 @@ public class UserRegistryService {
             File file = new File(usersFilePath);
             file.getParentFile().mkdirs();
             mapper.writerWithDefaultPrettyPrinter().writeValue(file, users);
+            log.info("Data stored for users.json");
         } catch (Exception e) {
             log.error("Failed to persist users.json: {}", e.getMessage(), e);
         }
