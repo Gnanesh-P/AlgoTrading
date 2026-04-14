@@ -26,7 +26,9 @@ FROM eclipse-temurin:17-jre-alpine AS runtime
 
 WORKDIR /app
 
-RUN mkdir -p /app/data/sessions
+#RUN mkdir -p /app/data/sessions
+RUN mkdir -p /app/data \
+    && chmod -R 777 /app/data
 # Non-root user (good practice, required by some registries)
 RUN addgroup -S algo && adduser -S algo -G algo
 USER algo
