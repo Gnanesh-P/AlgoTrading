@@ -4,6 +4,7 @@ import com.algotrading.backend.cache.MarketDataCache;
 import com.algotrading.backend.dto.AlgoStatusResponse;
 import com.algotrading.backend.model.*;
 import com.algotrading.backend.service.KiteInstrumentService;
+import com.algotrading.backend.service.KiteTickerService;
 import com.algotrading.backend.service.OptionInstrumentService;
 import com.algotrading.backend.service.SessionPersistenceService;
 import com.algotrading.backend.service.TelegramService;
@@ -17,78 +18,48 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 
-import java.time.LocalDate;
-import java.time.LocalDateTime;
-import java.time.LocalTime;
-import java.time.ZoneId;
+import java.time.*;
+import java.time.format.DateTimeFormatter;
 import java.time.temporal.ChronoUnit;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 
-/**
- * Per-user isolated trading engine.
- * <p>
- * Each subscriber gets exactly ONE instance while their algo is active.
- * Multiple instances run concurrently — one per active user — with zero
- * shared mutable state between them.
- * <p>
- * Responsibilities:
- * • Owns a private KiteConnect + KiteTicker for LIVE trading (user's own Kite account).
- * • Maintains a per-user LTP cache, candle aggregation state, and TradeSession.
- * • Runs the full strategy: candle capture → direction decision → entry/exit/reversal.
- * • For PAPER mode: receives ticks from the global ticker via TradingEngineRegistry.routeTickToPaperEngines().
- * • Persists session to ./data/sessions/{username}.json for crash recovery.
- */
 public class UserTradingEngine {
 
-    private final TelegramService telegramService;
     private static final Logger log = LoggerFactory.getLogger(UserTradingEngine.class);
+    private static final DateTimeFormatter IST_FMT = DateTimeFormatter.ofPattern("dd-MMM-yyyy HH:mm:ss");
 
-    // ── Identity ──────────────────────────────────────────────────────────────
     @Getter
     private final String username;
     private final PlatformUser platformUser;
+    private final TelegramService telegramService;
 
-    // ── Per-user Kite (LIVE mode only) ────────────────────────────────────────
     private KiteConnect kiteConnect;
     private KiteTicker kiteTicker;
     private volatile boolean tickerConnected = false;
 
-    // ── Per-user state ────────────────────────────────────────────────────────
     @Getter
     private volatile TradeSession session;
 
-    /**
-     * LTP cache populated by per-user KiteTicker ticks (LIVE) or global feed (PAPER).
-     */
     private final Map<String, Double> priceCache = new ConcurrentHashMap<>();
-    /**
-     * Forming 1-min candles per instrument.
-     */
     private final Map<String, Candle> formingCandles = new ConcurrentHashMap<>();
-    /**
-     * token → trading symbol mapping for this engine's KiteTicker subscription.
-     */
     private final Map<Long, String> tokenToSymbol = new ConcurrentHashMap<>();
     private final Set<Long> subscribedTokens = ConcurrentHashMap.newKeySet();
 
-    // ── Shared (read-only) dependencies ───────────────────────────────────────
-    /**
-     * Global price cache — used as LTP fallback for PAPER mode.
-     */
     private final MarketDataCache globalCache;
     private final OptionInstrumentService optionInstrumentService;
     private final KiteInstrumentService kiteInstrumentService;
+    private final KiteTickerService kiteTickerService;
     private final SimpMessagingTemplate messagingTemplate;
     private final SessionPersistenceService sessionPersistence;
 
-    // ─────────────────────────────────────────────────────────────────────────
-
-    public UserTradingEngine(TelegramService telegramService, PlatformUser platformUser,
+    public UserTradingEngine(TelegramService telegramService,
+                             PlatformUser platformUser,
                              MarketDataCache globalCache,
                              OptionInstrumentService optionInstrumentService,
                              KiteInstrumentService kiteInstrumentService,
+                             KiteTickerService kiteTickerService,
                              SimpMessagingTemplate messagingTemplate,
                              SessionPersistenceService sessionPersistence) {
         this.telegramService = telegramService;
@@ -97,10 +68,10 @@ public class UserTradingEngine {
         this.globalCache = globalCache;
         this.optionInstrumentService = optionInstrumentService;
         this.kiteInstrumentService = kiteInstrumentService;
+        this.kiteTickerService = kiteTickerService;
         this.messagingTemplate = messagingTemplate;
         this.sessionPersistence = sessionPersistence;
 
-        // Pre-create KiteConnect with user's credentials if available
         if (platformUser.getKiteApiKey() != null && !platformUser.getKiteApiKey().isBlank()) {
             this.kiteConnect = new KiteConnect(platformUser.getKiteApiKey());
             if (platformUser.getKiteAccessToken() != null) {
@@ -109,17 +80,9 @@ public class UserTradingEngine {
         }
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
-    //  KITE TICKER MANAGEMENT  (LIVE mode only)
-    // ═══════════════════════════════════════════════════════════════════════
-
-    /**
-     * Connect a private KiteTicker WebSocket using this user's own Kite credentials.
-     * Called only for LIVE trade mode engines.
-     */
     public void connectKiteTicker() {
         if (platformUser.getKiteApiKey() == null || platformUser.getKiteAccessToken() == null) {
-            log.warn("[{}] Cannot connect KiteTicker: kiteApiKey or kiteAccessToken missing in user profile", username);
+            log.warn("[{}] Cannot connect KiteTicker: credentials missing", username);
             return;
         }
         try {
@@ -151,9 +114,6 @@ public class UserTradingEngine {
         }
     }
 
-    /**
-     * Disconnect and clean up the per-user KiteTicker.
-     */
     public void disconnectKiteTicker() {
         if (kiteTicker != null) {
             try {
@@ -168,11 +128,6 @@ public class UserTradingEngine {
         log.info("[{}] KiteTicker disconnected and cleared", username);
     }
 
-    /**
-     * Subscribe instruments to this engine's KiteTicker.
-     * For LIVE engines: subscribes to own ticker.
-     * For PAPER engines: just registers the token→symbol mapping; ticks come via routeTickToPaperEngines().
-     */
     public void subscribeInstruments(Map<Long, String> instruments) {
         if (instruments == null || instruments.isEmpty()) return;
         tokenToSymbol.putAll(instruments);
@@ -194,9 +149,6 @@ public class UserTradingEngine {
         }
     }
 
-    /**
-     * Called by KiteTicker's arrival listener — LIVE mode only.
-     */
     private void onKiteTicksArrived(ArrayList<Tick> ticks) {
         if (ticks == null) return;
         for (Tick t : ticks) {
@@ -204,30 +156,17 @@ public class UserTradingEngine {
             if (symbol == null) continue;
             double ltp = t.getLastTradedPrice();
             priceCache.put(symbol, ltp);
-            // Real-time SL/Target check on every tick BEFORE candle aggregation
             checkSLTargetOnTick(symbol, ltp);
             processTickForCandle(symbol, ltp);
         }
     }
 
-    /**
-     * Entry point for PAPER-mode ticks pushed by TradingEngineRegistry.
-     * Ticks come from the global KiteTicker (admin's Kite connection).
-     * <p>
-     * For LIVE mode, ticks arrive directly via onKiteTicksArrived() from the
-     * per-user KiteTicker — this method is NOT called in live mode.
-     */
     public void processTick(MarketTick tick) {
         if (tick == null) return;
         priceCache.put(tick.getInstrument(), tick.getLastPrice());
-        // Real-time SL/Target check fires on every tick BEFORE candle aggregation
         checkSLTargetOnTick(tick.getInstrument(), tick.getLastPrice());
         processTickForCandle(tick.getInstrument(), tick.getLastPrice());
     }
-
-    // ═══════════════════════════════════════════════════════════════════════
-    //  CANDLE AGGREGATION
-    // ═══════════════════════════════════════════════════════════════════════
 
     private void processTickForCandle(String instrument, double price) {
         if (session == null || session.getState() == StrategyState.STOPPED
@@ -244,11 +183,9 @@ public class UserTradingEngine {
         }
 
         if (candleMinute.isAfter(forming.getOpenTime())) {
-            // Minute boundary crossed — candle closed
             forming.setCloseTime(forming.getOpenTime().plusMinutes(1).minusNanos(1));
             log.debug("[{}] Candle closed: {} close={}", username, instrument, forming.getClose());
 
-            // If this is the futures instrument, run strategy
             TradingConfig cfg = session.getConfig();
             if (cfg != null && instrument.equals(cfg.getFuturesInstrument())) {
                 onCandleClose(forming);
@@ -270,18 +207,10 @@ public class UserTradingEngine {
                 .build();
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
-    //  BROKER OPERATIONS
-    // ═══════════════════════════════════════════════════════════════════════
-
-    /**
-     * LTP lookup: per-user cache → per-user kiteConnect REST → global cache (fallback).
-     */
     double getLtp(String instrument) {
         Double cached = priceCache.get(instrument);
         if (cached != null && cached > 0) return cached;
 
-        // For LIVE mode: try REST via user's own kiteConnect
         if (session != null && session.getConfig().getTradeMode() == TradeMode.LIVE
                 && kiteConnect != null && platformUser.getKiteAccessToken() != null) {
             try {
@@ -296,7 +225,6 @@ public class UserTradingEngine {
             }
         }
 
-        // Fallback: global cache (populated by admin's Kite ticker — useful for PAPER mode)
         double globalLtp = globalCache.getLastPrice(instrument);
         if (globalLtp > 0) return globalLtp;
 
@@ -309,7 +237,6 @@ public class UserTradingEngine {
             log.info("[{}][PAPER] BUY {} x{} @ {}", username, instrument, qty, ltp);
             return ltp;
         }
-        // LIVE — use own kiteConnect
         if (kiteConnect == null || platformUser.getKiteAccessToken() == null) {
             throw new IllegalStateException("[" + username + "] KiteConnect not initialized for live trading");
         }
@@ -368,43 +295,10 @@ public class UserTradingEngine {
         }
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
-    //  SESSION CONTROL
-    // ═══════════════════════════════════════════════════════════════════════
-
-    /**
-     * Start a new trading session.
-     *
-     * @param config      pre-built TradingConfig (validated by AlgoController)
-     * @param instruments token→symbol map; already subscribed for LIVE, queued for PAPER
-     * @param startedBy   JWT username of the requester (for audit)
-     */
-
     public synchronized TradeSession startSession(TradingConfig config,
                                                   Map<Long, String> instruments,
                                                   String startedBy) {
-        // Reset candle state
         formingCandles.clear();
-
-//        String startMsg = String.format(
-//                "🚀 *Strategy Started*\n" +
-//                        "User: `%s`\n" +
-//                        "Mode: `%s`\n" +
-//                        "Futures: `%s`\n" +
-//                        "Expiry: `%s`\n" +
-//                        "Lots: `%d`\n" +
-//                        "Qty: `%d`\n" +
-//                        "SL: `%.2f`\n" +
-//                        "Target: `%.2f`",
-//                username,
-//                config.getTradeMode(),
-//                config.getFuturesInstrument(),
-//                config.getExpiryType(),
-//                config.getLotQuantity(),
-//                config.getTotalQuantity(),
-//                config.getStopLoss(),
-//                config.getTargetProfit()
-//        );
 
         String startMsg = String.format(
                 "🚀 <b>Strategy Started</b>\n" +
@@ -427,7 +321,6 @@ public class UserTradingEngine {
         );
         telegramService.sendStrategyMessage(startMsg);
 
-
         session = TradeSession.builder()
                 .sessionId(UUID.randomUUID().toString())
                 .tradeDate(LocalDate.now())
@@ -442,7 +335,6 @@ public class UserTradingEngine {
                 .tradeLegs(new ArrayList<>())
                 .build();
 
-        // Register instruments so candle aggregation filters them
         if (instruments != null) {
             tokenToSymbol.putAll(instruments);
             subscribedTokens.addAll(instruments.keySet());
@@ -455,26 +347,19 @@ public class UserTradingEngine {
         return session;
     }
 
-    /**
-     * Manual stop — exits open position and marks session STOPPED.
-     */
     public synchronized TradeSession stopSession() {
         if (session == null) throw new IllegalStateException("No active session for user: " + username);
         if (session.getState() == StrategyState.IN_POSITION) {
             exitCurrentPosition("MANUAL_STOP");
         }
         internalStopSession("Manual stop");
-        sessionPersistence.clearForUser(username);   // intentional stop — no recovery needed
+        sessionPersistence.clearForUser(username);
         log.info("[{}] Session stopped manually", username);
         return session;
     }
 
-    /**
-     * Restore a previously persisted session (crash recovery).
-     */
     public synchronized void restoreSession(TradeSession restored) {
         this.session = restored;
-        // Re-register instruments from config for candle routing
         TradingConfig cfg = restored.getConfig();
         if (cfg.getFuturesInstrument() != null) {
             kiteInstrumentService.findBySymbol(cfg.getFuturesInstrument())
@@ -493,9 +378,6 @@ public class UserTradingEngine {
                 restored.getSessionId(), restored.getState());
     }
 
-    /**
-     * Called by TradingEngineRegistry's @Scheduled EOD job.
-     */
     public synchronized void squareOffEod() {
         if (session == null) return;
         if (session.getState() == StrategyState.STOPPED
@@ -505,7 +387,7 @@ public class UserTradingEngine {
             log.info("[{}] EOD reached but squareOffEod=false — no auto exit", username);
             return;
         }
-        log.info("[{}] EOD 15:29 square-off triggered", username);
+        log.info("[{}] EOD 15:29 IST square-off triggered", username);
         if (session.getState() == StrategyState.IN_POSITION) {
             exitCurrentPosition("EOD");
         }
@@ -514,14 +396,17 @@ public class UserTradingEngine {
         broadcastUpdate();
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
-    //  STRATEGY LOGIC
-    // ═══════════════════════════════════════════════════════════════════════
+    public synchronized void updateParams(double targetPrice, double stopLoss,
+                                          boolean stopLossEnabled, double trailingProfit) {
+        if (session == null) throw new IllegalStateException("No active session");
+        TradingConfig cfg = session.getConfig();
+        cfg.setTargetProfit(targetPrice);
+        cfg.setStopLoss(stopLossEnabled ? stopLoss : 0);
+        cfg.setTrailingProfit(trailingProfit);
+        log.info("[{}] Params updated: target={}, sl={} ({}), trailing={}",
+                username, targetPrice, stopLoss, stopLossEnabled ? "ON" : "OFF", trailingProfit);
+    }
 
-    /**
-     * Real-time SL / Target check on every option tick.
-     * Exits immediately when threshold is breached — does NOT wait for candle close.
-     */
     synchronized void checkSLTargetOnTick(String instrument, double ltp) {
         if (session == null || session.getState() != StrategyState.IN_POSITION) return;
 
@@ -532,12 +417,10 @@ public class UserTradingEngine {
         double totalPnL = session.getTotalRealizedPnL() + liveLegPnL;
         TradingConfig cfg = session.getConfig();
 
-        // Always update openPnL for live UI
         session.setOpenPnL(liveLegPnL);
 
-        // ── Stop Loss ──────────────────────────────────────────────────────
-        if (totalPnL <= -cfg.getStopLoss()) {
-            log.info("[{}] ⚡ SL hit on tick: totalPnL={} <= -{} | ltp={}", username, totalPnL, cfg.getStopLoss(), ltp);
+        if (cfg.getStopLoss() > 0 && totalPnL <= -cfg.getStopLoss()) {
+            log.info("[{}] SL hit on tick: totalPnL={} <= -{} | ltp={}", username, totalPnL, cfg.getStopLoss(), ltp);
             exitCurrentPosition("STOPLOSS");
             internalStopSession("Stop loss hit: " + totalPnL);
             sessionPersistence.saveForUser(username, session);
@@ -547,9 +430,8 @@ public class UserTradingEngine {
 
         double trailing = cfg.getTrailingProfit();
 
-        // ── Plain Target ───────────────────────────────────────────────────
         if (trailing <= 0 && totalPnL >= cfg.getTargetProfit()) {
-            log.info("[{}] ⚡ Target hit on tick: totalPnL={} >= {} | ltp={}", username, totalPnL, cfg.getTargetProfit(), ltp);
+            log.info("[{}] Target hit on tick: totalPnL={} >= {} | ltp={}", username, totalPnL, cfg.getTargetProfit(), ltp);
             exitCurrentPosition("TARGET");
             internalStopSession("Target profit reached: " + totalPnL);
             sessionPersistence.saveForUser(username, session);
@@ -557,12 +439,11 @@ public class UserTradingEngine {
             return;
         }
 
-        // ── Trailing Target ────────────────────────────────────────────────
         if (trailing > 0) {
             if (!session.isTrailingActive() && totalPnL >= cfg.getTargetProfit()) {
                 session.setTrailingActive(true);
                 session.setTrailingHighWatermark(totalPnL);
-                log.info("[{}] ⚡ Trailing activated on tick: pnl={}, step={}", username, totalPnL, trailing);
+                log.info("[{}] Trailing activated on tick: pnl={}, step={}", username, totalPnL, trailing);
             }
             if (session.isTrailingActive()) {
                 if (totalPnL > session.getTrailingHighWatermark()) {
@@ -570,7 +451,7 @@ public class UserTradingEngine {
                 }
                 double exitLevel = session.getTrailingHighWatermark() - trailing;
                 if (totalPnL <= exitLevel) {
-                    log.info("[{}] ⚡ Trailing stop on tick: pnl={} <= watermark({}) - step({})",
+                    log.info("[{}] Trailing stop on tick: pnl={} <= watermark({}) - step({})",
                             username, totalPnL, session.getTrailingHighWatermark(), trailing);
                     exitCurrentPosition("TRAILING_STOP");
                     internalStopSession(String.format(
@@ -596,7 +477,6 @@ public class UserTradingEngine {
         LocalTime candleTime = candle.getOpenTime().toLocalTime();
         LocalTime startTime = cfg.getStartCandleTime();
 
-        // BUG FIX: update openPnL BEFORE strategy checks so candle-close P&L is fresh
         updateOpenPnL();
 
         if (session.getState() == StrategyState.WAITING_FOR_CANDLES) {
@@ -612,7 +492,6 @@ public class UserTradingEngine {
     private void handleWaitingForCandles(Candle candle, LocalTime candleTime, LocalTime startTime) {
         log.debug("Session Data : {}", session);
         if (session.getFirstCandle() == null) {
-            log.debug("Session Data for first candle : {}", session);
             log.debug("StartTime : {}, candleTime : {}", startTime, candleTime);
             if (!candleTime.isBefore(startTime)) {
                 candle.setCandleIndex(1);
@@ -620,7 +499,6 @@ public class UserTradingEngine {
                 log.info("[{}] 1st candle: time={}, close={}", username, candleTime, candle.getClose());
             }
         } else if (session.getSecondCandle() == null) {
-            log.debug("Session Data for second candle : {}", session);
             candle.setCandleIndex(2);
             session.setSecondCandle(candle);
             log.info("[{}] 2nd candle: time={}, close={} → entering at 3rd candle open",
@@ -661,23 +539,19 @@ public class UserTradingEngine {
 
         if (!toSub.isEmpty()) {
             subscribeInstruments(toSub);
+            kiteTickerService.subscribe(toSub);
             log.info("[{}] AUTO_ATM: subscribed CE/PE — {}", username, toSub.values());
         } else {
             log.warn("[{}] AUTO_ATM: instrument tokens not found for CE={} PE={}", username, ceSymbol, peSymbol);
         }
 
-        // Seed LTP for immediate entry (before first tick arrives)
         seedLtp(ceSymbol);
         seedLtp(peSymbol);
     }
 
-    /**
-     * Fetch LTP and seed the per-user price cache.
-     */
     private void seedLtp(String instrument) {
-        if (priceCache.getOrDefault(instrument, 0.0) > 0) return;  // already warm
+        if (priceCache.getOrDefault(instrument, 0.0) > 0) return;
 
-        // Try per-user kiteConnect REST
         if (kiteConnect != null && platformUser.getKiteAccessToken() != null) {
             try {
                 Map<String, LTPQuote> map = kiteConnect.getLTP(new String[]{"NFO:" + instrument});
@@ -692,7 +566,6 @@ public class UserTradingEngine {
             }
         }
 
-        // Fallback: global kiteInstrumentService (admin's Kite)
         double ltp = kiteInstrumentService.fetchCurrentLtp(instrument);
         if (ltp > 0) {
             priceCache.put(instrument, ltp);
@@ -735,18 +608,10 @@ public class UserTradingEngine {
             session.setReversalCount(session.getReversalCount() + 1);
 
             if (isPnLExitTriggered()) return;
-            String msg = String.format(
-                    "🔄 <b>Position Reversed</b>\n" +
-                            "From: <code>%s</code>\n" +
-                            "To: <code>%s</code>\n" +
-                            "Current Close: <code>%.2f</code>\n" +
-                            "First Close: <code>%.2f</code>",
-                    openLeg.getOptionType(),
-                    newDir,
-                    currentClose,
-                    firstClose
-            );
 
+            String msg = String.format(
+                    "🔄 <b>Position Reversed</b>\nFrom: <code>%s</code>\nTo: <code>%s</code>\nClose: <code>%.2f</code>\nFirst Close: <code>%.2f</code>",
+                    openLeg.getOptionType(), newDir, currentClose, firstClose);
             telegramService.sendStrategyMessage(msg);
             enterPosition(newDir, "REVERSAL_" + session.getReversalCount());
         }
@@ -784,23 +649,12 @@ public class UserTradingEngine {
 
         session.setCurrentLegNumber(leg.getLegNumber());
         session.getTradeLegs().add(leg);
-        String msg = String.format(
-                "✅ <b>Position Entered</b>\n" +
-                        "Type: <code>%s</code>\n" +
-                        "Instrument: <code>%s</code>\n" +
-                        "Strike: <code>%d</code>\n" +
-                        "Price: <code>%.2f</code>\n" +
-                        "Qty: <code>%d</code>\n" +
-                        "Reason: <code>%s</code>",
-                optionType,
-                instrument,
-                strikePrice,
-                entryPrice,
-                leg.getQuantity(),
-                reason
-        );
 
+        String msg = String.format(
+                "✅ <b>Position Entered</b>\nType: <code>%s</code>\nInstrument: <code>%s</code>\nStrike: <code>%d</code>\nPrice: <code>%.2f</code>\nQty: <code>%d</code>\nReason: <code>%s</code>",
+                optionType, instrument, strikePrice, entryPrice, leg.getQuantity(), reason);
         telegramService.sendStrategyMessage(msg);
+
         log.info("[{}] Entered leg={} type={} instrument={} entry={} reason={}",
                 username, leg.getLegNumber(), optionType, instrument, entryPrice, reason);
     }
@@ -818,35 +672,23 @@ public class UserTradingEngine {
         }
 
         openLeg.setExitPrice(exitPrice);
-        openLeg.setExitTime(LocalDateTime.now());
+        openLeg.setExitTime(LocalDateTime.now(ZoneId.of("Asia/Kolkata")));
         openLeg.setExitReason(reason);
         openLeg.setClosed(true);
 
         double legPnl = (exitPrice - openLeg.getEntryPrice()) * openLeg.getQuantity();
         openLeg.setPnl(legPnl);
         session.setCumulativePnL(session.getCumulativePnL() + legPnl);
+        session.setOpenPnL(0);
 
         log.info("[{}] Exited leg={} type={} exit={} legPnL={} cumPnL={} reason={}",
                 username, openLeg.getLegNumber(), openLeg.getOptionType(),
                 exitPrice, legPnl, session.getCumulativePnL(), reason);
-        double profitLoss = (exitPrice - openLeg.getEntryPrice()) * openLeg.getQuantity();
 
         String msg = String.format(
-                "🔚 <b>Position Exited</b>\n" +
-                        "Type: <code>%s</code>\n" +
-                        "Instrument: <code>%s</code>\n" +
-                        "Entry: <code>%.2f</code>\n" +
-                        "Exit: <code>%.2f</code>\n" +
-                        "P/L: <code>%.2f</code>\n" +
-                        "Reason: <code>%s</code>",
-                openLeg.getOptionType(),
-                openLeg.getInstrument(),
-                openLeg.getEntryPrice(),
-                exitPrice,
-                profitLoss,
-                reason
-        );
-
+                "🔚 <b>Position Exited</b>\nType: <code>%s</code>\nInstrument: <code>%s</code>\nEntry: <code>%.2f</code>\nExit: <code>%.2f</code>\nP/L: <code>%.2f</code>\nReason: <code>%s</code>",
+                openLeg.getOptionType(), openLeg.getInstrument(),
+                openLeg.getEntryPrice(), exitPrice, legPnl, reason);
         telegramService.sendStrategyMessage(msg);
     }
 
@@ -868,7 +710,7 @@ public class UserTradingEngine {
         double trailingStep = cfg.getTrailingProfit();
         boolean useTrailing = trailingStep > 0;
 
-        if (totalPnl <= -cfg.getStopLoss()) {
+        if (cfg.getStopLoss() > 0 && totalPnl <= -cfg.getStopLoss()) {
             log.info("[{}] Stop loss hit: {} <= -{}", username, totalPnl, cfg.getStopLoss());
             exitCurrentPosition("STOPLOSS");
             internalStopSession("Stop loss hit: " + totalPnl);
@@ -912,7 +754,7 @@ public class UserTradingEngine {
         double trailingStep = cfg.getTrailingProfit();
         boolean useTrailing = trailingStep > 0;
 
-        if (totalPnl <= -cfg.getStopLoss()) {
+        if (cfg.getStopLoss() > 0 && totalPnl <= -cfg.getStopLoss()) {
             internalStopSession("Stop loss hit after reversal: " + totalPnl);
             return true;
         }
@@ -936,15 +778,136 @@ public class UserTradingEngine {
 
     private void internalStopSession(String reason) {
         session.setState(StrategyState.STOPPED);
-        session.setEndTime(LocalDateTime.now());
+        session.setEndTime(LocalDateTime.now(ZoneId.of("Asia/Kolkata")));
         session.setStopReason(reason);
         log.info("[{}] Strategy stopped: {}", username, reason);
         sessionPersistence.saveForUser(username, session);
+        sendTelegramSummary(reason);
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
-    //  STATUS
-    // ═══════════════════════════════════════════════════════════════════════
+    private void sendTelegramSummary(String stopReason) {
+        try {
+            TradingConfig cfg = session.getConfig();
+            ZoneId ist = ZoneId.of("Asia/Kolkata");
+
+            String firstCandleInfo = "—";
+            if (session.getFirstCandle() != null) {
+                Candle c = session.getFirstCandle();
+                String t = c.getOpenTime() != null
+                        ? c.getOpenTime().atZone(ZoneId.systemDefault()).withZoneSameInstant(ist)
+                              .toLocalTime().toString().substring(0, 5)
+                        : "—";
+                firstCandleInfo = String.format("Time: %s | Close: %.2f", t, c.getClose());
+            }
+
+            String lastCandleInfo = "—";
+            Candle lastC = session.getLastClosedCandle() != null
+                    ? session.getLastClosedCandle() : session.getSecondCandle();
+            if (lastC != null) {
+                String t = lastC.getOpenTime() != null
+                        ? lastC.getOpenTime().atZone(ZoneId.systemDefault()).withZoneSameInstant(ist)
+                              .toLocalTime().toString().substring(0, 5)
+                        : "—";
+                lastCandleInfo = String.format("Time: %s | Close: %.2f", t, lastC.getClose());
+            }
+
+            String strategyDirection = "—";
+            if (!session.getTradeLegs().isEmpty()) {
+                strategyDirection = session.getTradeLegs().get(0).getOptionType().name();
+            }
+
+            StringBuilder tableRows = new StringBuilder();
+            for (TradeEntry leg : session.getTradeLegs()) {
+                String entryT = leg.getEntryTime() != null
+                        ? leg.getEntryTime().atZone(ZoneId.systemDefault()).withZoneSameInstant(ist)
+                              .toLocalTime().toString().substring(0, 8)
+                        : "—";
+                String exitT = leg.getExitTime() != null
+                        ? leg.getExitTime().toLocalTime().toString().substring(0, 8)
+                        : "OPEN";
+                tableRows.append(String.format(
+                        "<tr><td>%d</td><td>%s</td><td>%.2f</td><td>%s</td><td>%.2f</td><td>%s</td><td>%.0f</td><td>%s</td></tr>",
+                        leg.getLegNumber(),
+                        leg.getOptionType().name(),
+                        leg.getEntryPrice(),
+                        entryT,
+                        leg.getExitPrice(),
+                        exitT,
+                        leg.getPnl(),
+                        leg.isClosed() ? leg.getExitReason() : "OPEN"
+                ));
+            }
+
+            String startT = session.getStartTime() != null
+                    ? session.getStartTime().atZone(ZoneId.systemDefault()).withZoneSameInstant(ist)
+                          .format(IST_FMT)
+                    : "—";
+            String endT = session.getEndTime() != null
+                    ? session.getEndTime().format(IST_FMT)
+                    : LocalDateTime.now(ist).format(IST_FMT);
+
+            double totalPnl = session.getCumulativePnL();
+
+            String html = String.format(
+                    "📊 <b>Strategy Summary — %s</b>\n\n" +
+                    "User: <code>%s</code>\n" +
+                    "Strategy: <code>%s</code>\n" +
+                    "Futures: <code>%s</code>  |  Expiry: <code>%s</code>\n" +
+                    "Start: <code>%s</code>  |  End: <code>%s</code>\n" +
+                    "Stop Reason: <code>%s</code>\n\n" +
+                    "📌 First Candle: <code>%s</code>\n" +
+                    "📌 Last Candle: <code>%s</code>\n\n" +
+                    "<b>Trade Log:</b>\n" +
+                    "<pre>" +
+                    "%-3s %-4s %-8s %-8s %-8s %-8s %-8s %-12s\n" +
+                    "%s" +
+                    "</pre>\n\n" +
+                    "💰 <b>Total P&amp;L: %.0f</b>",
+                    stopReason,
+                    username,
+                    strategyDirection,
+                    cfg.getFuturesInstrument(),
+                    cfg.getExpiryType(),
+                    startT,
+                    endT,
+                    stopReason,
+                    firstCandleInfo,
+                    lastCandleInfo,
+                    "#", "TYPE", "ENTRY", "ENTRY-T", "EXIT", "EXIT-T", "P&L", "REASON",
+                    buildTextTable(),
+                    totalPnl
+            );
+
+            telegramService.sendStrategyMessage(html);
+        } catch (Exception e) {
+            log.warn("[{}] Failed to send Telegram summary: {}", username, e.getMessage());
+        }
+    }
+
+    private String buildTextTable() {
+        ZoneId ist = ZoneId.of("Asia/Kolkata");
+        StringBuilder sb = new StringBuilder();
+        for (TradeEntry leg : session.getTradeLegs()) {
+            String entryT = leg.getEntryTime() != null
+                    ? leg.getEntryTime().atZone(ZoneId.systemDefault()).withZoneSameInstant(ist)
+                          .toLocalTime().toString().substring(0, 8)
+                    : "—";
+            String exitT = leg.getExitTime() != null
+                    ? leg.getExitTime().toLocalTime().toString().substring(0, 8)
+                    : "OPEN";
+            sb.append(String.format("%-3d %-4s %-8.2f %-8s %-8.2f %-8s %-8.0f %-12s\n",
+                    leg.getLegNumber(),
+                    leg.getOptionType().name(),
+                    leg.getEntryPrice(),
+                    entryT,
+                    leg.getExitPrice(),
+                    exitT,
+                    leg.getPnl(),
+                    leg.isClosed() ? leg.getExitReason() : "OPEN"
+            ));
+        }
+        return sb.toString();
+    }
 
     public AlgoStatusResponse buildStatusResponse() {
         if (session == null) return null;
@@ -1007,7 +970,6 @@ public class UserTradingEngine {
                 .trailingHighWatermark(session.getTrailingHighWatermark())
                 .squareOffEod(cfg.isSquareOffEod())
                 .paperTrade(cfg.getTradeMode() == TradeMode.PAPER)
-                // Active config summary — shown in UI header so user knows what's running
                 .entryStartTime(cfg.getStartCandleTime() != null ? cfg.getStartCandleTime().toString() : null)
                 .strikeMode(cfg.getStrikeMode() != null ? cfg.getStrikeMode().name() : null)
                 .lotQuantity(cfg.getLotQuantity())
@@ -1041,27 +1003,16 @@ public class UserTradingEngine {
         return "STOPPED";
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
-    //  HELPERS
-    // ═══════════════════════════════════════════════════════════════════════
-
-    /**
-     * Broadcast to the user-specific WebSocket topic. UI subscribes to /topic/trade-updates/{username}.
-     */
     private void broadcastUpdate() {
         if (session == null) return;
         try {
             messagingTemplate.convertAndSend("/topic/trade-updates/" + username, buildStatusResponse());
-            // Also broadcast to the shared topic for backward compat (single-tab UIs)
             messagingTemplate.convertAndSend("/topic/trade-updates", buildStatusResponse());
         } catch (Exception e) {
             log.warn("[{}] WebSocket broadcast failed: {}", username, e.getMessage());
         }
     }
 
-    /**
-     * Update the user's Kite access token at runtime (e.g. after daily OAuth login).
-     */
     public void updateKiteAccessToken(String newToken) {
         if (kiteConnect == null && platformUser.getKiteApiKey() != null) {
             kiteConnect = new KiteConnect(platformUser.getKiteApiKey());

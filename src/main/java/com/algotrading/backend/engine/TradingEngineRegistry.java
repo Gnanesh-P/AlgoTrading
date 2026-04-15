@@ -14,44 +14,22 @@ import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 
-/**
- * Central registry that manages one {@link UserTradingEngine} per active user.
- *
- * Multiple engines run concurrently — each on the same JVM thread pool —
- * each owning its own KiteConnect + KiteTicker + session + candle state.
- *
- * Responsibilities:
- *  • Create / destroy engines on start/stop requests.
- *  • Route global paper-mode ticks to all paper engines.
- *  • Run EOD square-off across all active engines (@Scheduled).
- *  • Crash recovery: restore persisted sessions on app startup (@PostConstruct).
- */
 @Service
 @RequiredArgsConstructor
 @Slf4j
 public class TradingEngineRegistry {
 
-    /** username → active engine */
     private final Map<String, UserTradingEngine> engines = new ConcurrentHashMap<>();
 
-    // ── Shared deps (injected into each engine at creation) ───────────────────
     private final MarketDataCache         globalCache;
     private final OptionInstrumentService optionInstrumentService;
     private final KiteInstrumentService   kiteInstrumentService;
+    private final KiteTickerService       kiteTickerService;
     private final SimpMessagingTemplate   messagingTemplate;
     private final SessionPersistenceService sessionPersistence;
     private final UserRegistryService     userRegistry;
-    private final TelegramService telegramService;
+    private final TelegramService         telegramService;
 
-    // ═══════════════════════════════════════════════════════════════════════
-    //  CRASH RECOVERY
-    // ═══════════════════════════════════════════════════════════════════════
-
-    /**
-     * On startup, scan for any per-user session files in ./data/sessions/ and
-     * restore engines that were IN_POSITION or WAITING_FOR_CANDLES when the
-     * server last went down.
-     */
     @PostConstruct
     public void recoverAllSessions() {
         List<String> usernames = sessionPersistence.findAllPersistedUsernames();
@@ -64,7 +42,7 @@ public class TradingEngineRegistry {
             sessionPersistence.loadForUser(username).ifPresent(session -> {
                 StrategyState state = session.getState();
                 if (state == StrategyState.IN_POSITION || state == StrategyState.WAITING_FOR_CANDLES) {
-                    log.warn("⚠️  CRASH RECOVERY [{}]: restoring session {} (state={})",
+                    log.warn("CRASH RECOVERY [{}]: restoring session {} (state={})",
                             username, session.getSessionId(), state);
 
                     userRegistry.findByUsername(username).ifPresentOrElse(
@@ -72,17 +50,15 @@ public class TradingEngineRegistry {
                                 UserTradingEngine engine = buildEngine(user);
                                 engine.restoreSession(session);
 
-                                // Re-connect live ticker if applicable
                                 if (session.getConfig().getTradeMode() == TradeMode.LIVE) {
                                     engine.connectKiteTicker();
                                 }
                                 engines.put(username, engine);
                                 log.info("Recovery [{}]: engine restored", username);
                             },
-                            () -> log.warn("Recovery [{}]: user no longer exists in registry — skipping", username)
+                            () -> log.warn("Recovery [{}]: user no longer exists — skipping", username)
                     );
                 } else {
-                    // STOPPED/IDLE — clean up stale file
                     log.info("Recovery [{}]: session state={} (terminal) — clearing file", username, state);
                     sessionPersistence.clearForUser(username);
                 }
@@ -90,30 +66,12 @@ public class TradingEngineRegistry {
         }
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
-    //  ENGINE LIFECYCLE
-    // ═══════════════════════════════════════════════════════════════════════
-
-    /**
-     * Create and start a new trading engine for the given user.
-     *
-     * Pre-conditions (validated by AlgoController before calling):
-     *  • Plan is active, lot limit not exceeded.
-     *  • No existing ACTIVE engine for this user.
-     *
-     * @param user        the PlatformUser starting the algo
-     * @param config      fully-built TradingConfig
-     * @param instruments token→symbol map to subscribe (futures + CE/PE for MANUAL)
-     * @param startedBy   JWT username (usually == user.getUsername())
-     * @return the started engine
-     */
     public UserTradingEngine startEngine(PlatformUser user,
                                           TradingConfig config,
                                           Map<Long, String> instruments,
                                           String startedBy) {
         String username = user.getUsername();
 
-        // If there's a stale stopped engine, remove it
         UserTradingEngine stale = engines.get(username);
         if (stale != null && !stale.isActive()) {
             stale.disconnectKiteTicker();
@@ -122,14 +80,11 @@ public class TradingEngineRegistry {
 
         UserTradingEngine engine = buildEngine(user);
 
-        // For LIVE mode: connect the user's own KiteTicker BEFORE starting session
         if (config.getTradeMode() == TradeMode.LIVE) {
             engine.connectKiteTicker();
         }
 
-        // Subscribe instruments to the engine (live: queued for ticker; paper: stored for routing)
         engine.subscribeInstruments(instruments);
-
         engine.startSession(config, instruments, startedBy);
         engines.put(username, engine);
 
@@ -137,57 +92,49 @@ public class TradingEngineRegistry {
         return engine;
     }
 
-    /**
-     * Stop the engine for a user.
-     * Exits any open position, disconnects ticker, removes from registry.
-     */
     public Optional<TradeSession> stopEngine(String username) {
         UserTradingEngine engine = engines.get(username);
         if (engine == null) return Optional.empty();
 
         TradeSession stopped = engine.stopSession();
         engine.disconnectKiteTicker();
-        engines.remove(username);
-        log.info("Engine stopped and removed for [{}]", username);
+        log.info("Engine stopped for [{}] — kept in registry for P&L display", username);
         return Optional.of(stopped);
     }
 
-    /** @return the engine for a user, if active. */
+    public void clearStoppedEngine(String username) {
+        UserTradingEngine engine = engines.get(username);
+        if (engine != null && !engine.isActive()) {
+            engines.remove(username);
+            log.info("Cleared stopped engine for [{}]", username);
+        }
+    }
+
     public Optional<UserTradingEngine> getEngine(String username) {
         return Optional.ofNullable(engines.get(username));
     }
 
-    /** @return true if the user has an active (WAITING or IN_POSITION) engine. */
     public boolean hasActiveEngine(String username) {
         UserTradingEngine engine = engines.get(username);
         return engine != null && engine.isActive();
     }
 
-    /** All currently registered engines (active or recently stopped). */
     public Map<String, UserTradingEngine> getAllEngines() {
         return Collections.unmodifiableMap(engines);
     }
 
-    /** Build a new engine wired with shared dependencies for the given user. */
     private UserTradingEngine buildEngine(PlatformUser user) {
-        return new UserTradingEngine( telegramService,
+        return new UserTradingEngine(
+                telegramService,
                 user,
                 globalCache,
                 optionInstrumentService,
                 kiteInstrumentService,
+                kiteTickerService,
                 messagingTemplate,
                 sessionPersistence);
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
-    //  TICK ROUTING (paper mode)
-    // ═══════════════════════════════════════════════════════════════════════
-
-    /**
-     * Called by MarketDataService on every global tick.
-     * Routes the tick to all PAPER-mode engines whose session includes this instrument.
-     * LIVE engines receive ticks directly from their own KiteTicker.
-     */
     public void routeTickToPaperEngines(MarketTick tick) {
         engines.values().forEach(engine -> {
             TradeSession s = engine.getSession();
@@ -198,17 +145,9 @@ public class TradingEngineRegistry {
         });
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
-    //  EOD SCHEDULED JOB
-    // ═══════════════════════════════════════════════════════════════════════
-
-    /**
-     * At 15:29 Monday–Friday, trigger EOD square-off for every active engine
-     * that has squareOffEod=true in its config.
-     */
-    @Scheduled(cron = "0 29 15 * * MON-FRI")
+    @Scheduled(cron = "0 29 15 * * MON-FRI", zone = "Asia/Kolkata")
     public void squareOffAllEnginesEod() {
-        log.info("EOD 15:29 — running square-off for {} active engines", engines.size());
+        log.info("EOD 15:29 IST — running square-off for {} engines", engines.size());
         engines.values().forEach(engine -> {
             try {
                 engine.squareOffEod();
@@ -216,17 +155,8 @@ public class TradingEngineRegistry {
                 log.error("EOD square-off error for [{}]: {}", engine.getUsername(), e.getMessage());
             }
         });
-        // Remove stopped engines
-        engines.entrySet().removeIf(e -> !e.getValue().isActive());
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
-    //  ADMIN / STATUS
-    // ═══════════════════════════════════════════════════════════════════════
-
-    /**
-     * Summary of all active sessions — used by admin panel.
-     */
     public List<Map<String, Object>> getAllSessionSummaries() {
         return engines.values().stream()
                 .map(engine -> {
@@ -246,9 +176,6 @@ public class TradingEngineRegistry {
                 .collect(Collectors.toList());
     }
 
-    /**
-     * Force-stop any session for a given user — admin override.
-     */
     public void forceStopEngine(String username) {
         stopEngine(username);
         log.info("Admin force-stopped engine for [{}]", username);
