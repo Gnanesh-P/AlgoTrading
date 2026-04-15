@@ -20,6 +20,7 @@ import org.springframework.messaging.simp.SimpMessagingTemplate;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
+import java.time.ZoneId;
 import java.time.temporal.ChronoUnit;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
@@ -232,7 +233,7 @@ public class UserTradingEngine {
         if (session == null || session.getState() == StrategyState.STOPPED
                 || session.getState() == StrategyState.IDLE) return;
 
-        LocalDateTime now = LocalDateTime.now();
+        LocalDateTime now = LocalDateTime.now(ZoneId.of("Asia/Kolkata"));
         LocalDateTime candleMinute = now.truncatedTo(ChronoUnit.MINUTES);
 
         Candle forming = formingCandles.get(instrument);
