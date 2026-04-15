@@ -27,17 +27,17 @@ import java.util.stream.Collectors;
 
 /**
  * Per-user isolated trading engine.
- *
+ * <p>
  * Each subscriber gets exactly ONE instance while their algo is active.
  * Multiple instances run concurrently — one per active user — with zero
  * shared mutable state between them.
- *
+ * <p>
  * Responsibilities:
- *  • Owns a private KiteConnect + KiteTicker for LIVE trading (user's own Kite account).
- *  • Maintains a per-user LTP cache, candle aggregation state, and TradeSession.
- *  • Runs the full strategy: candle capture → direction decision → entry/exit/reversal.
- *  • For PAPER mode: receives ticks from the global ticker via TradingEngineRegistry.routeTickToPaperEngines().
- *  • Persists session to ./data/sessions/{username}.json for crash recovery.
+ * • Owns a private KiteConnect + KiteTicker for LIVE trading (user's own Kite account).
+ * • Maintains a per-user LTP cache, candle aggregation state, and TradeSession.
+ * • Runs the full strategy: candle capture → direction decision → entry/exit/reversal.
+ * • For PAPER mode: receives ticks from the global ticker via TradingEngineRegistry.routeTickToPaperEngines().
+ * • Persists session to ./data/sessions/{username}.json for crash recovery.
  */
 public class UserTradingEngine {
 
@@ -45,31 +45,41 @@ public class UserTradingEngine {
     private static final Logger log = LoggerFactory.getLogger(UserTradingEngine.class);
 
     // ── Identity ──────────────────────────────────────────────────────────────
-    @Getter private final String username;
-    private final PlatformUser   platformUser;
+    @Getter
+    private final String username;
+    private final PlatformUser platformUser;
 
     // ── Per-user Kite (LIVE mode only) ────────────────────────────────────────
-    private KiteConnect  kiteConnect;
-    private KiteTicker   kiteTicker;
+    private KiteConnect kiteConnect;
+    private KiteTicker kiteTicker;
     private volatile boolean tickerConnected = false;
 
     // ── Per-user state ────────────────────────────────────────────────────────
-    @Getter private volatile TradeSession session;
+    @Getter
+    private volatile TradeSession session;
 
-    /** LTP cache populated by per-user KiteTicker ticks (LIVE) or global feed (PAPER). */
-    private final Map<String, Double>  priceCache     = new ConcurrentHashMap<>();
-    /** Forming 1-min candles per instrument. */
-    private final Map<String, Candle>  formingCandles = new ConcurrentHashMap<>();
-    /** token → trading symbol mapping for this engine's KiteTicker subscription. */
-    private final Map<Long, String>    tokenToSymbol  = new ConcurrentHashMap<>();
-    private final Set<Long>            subscribedTokens = ConcurrentHashMap.newKeySet();
+    /**
+     * LTP cache populated by per-user KiteTicker ticks (LIVE) or global feed (PAPER).
+     */
+    private final Map<String, Double> priceCache = new ConcurrentHashMap<>();
+    /**
+     * Forming 1-min candles per instrument.
+     */
+    private final Map<String, Candle> formingCandles = new ConcurrentHashMap<>();
+    /**
+     * token → trading symbol mapping for this engine's KiteTicker subscription.
+     */
+    private final Map<Long, String> tokenToSymbol = new ConcurrentHashMap<>();
+    private final Set<Long> subscribedTokens = ConcurrentHashMap.newKeySet();
 
     // ── Shared (read-only) dependencies ───────────────────────────────────────
-    /** Global price cache — used as LTP fallback for PAPER mode. */
-    private final MarketDataCache         globalCache;
+    /**
+     * Global price cache — used as LTP fallback for PAPER mode.
+     */
+    private final MarketDataCache globalCache;
     private final OptionInstrumentService optionInstrumentService;
-    private final KiteInstrumentService   kiteInstrumentService;
-    private final SimpMessagingTemplate   messagingTemplate;
+    private final KiteInstrumentService kiteInstrumentService;
+    private final SimpMessagingTemplate messagingTemplate;
     private final SessionPersistenceService sessionPersistence;
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -81,13 +91,13 @@ public class UserTradingEngine {
                              SimpMessagingTemplate messagingTemplate,
                              SessionPersistenceService sessionPersistence) {
         this.telegramService = telegramService;
-        this.platformUser          = platformUser;
-        this.username              = platformUser.getUsername();
-        this.globalCache           = globalCache;
+        this.platformUser = platformUser;
+        this.username = platformUser.getUsername();
+        this.globalCache = globalCache;
         this.optionInstrumentService = optionInstrumentService;
         this.kiteInstrumentService = kiteInstrumentService;
-        this.messagingTemplate     = messagingTemplate;
-        this.sessionPersistence    = sessionPersistence;
+        this.messagingTemplate = messagingTemplate;
+        this.sessionPersistence = sessionPersistence;
 
         // Pre-create KiteConnect with user's credentials if available
         if (platformUser.getKiteApiKey() != null && !platformUser.getKiteApiKey().isBlank()) {
@@ -140,10 +150,15 @@ public class UserTradingEngine {
         }
     }
 
-    /** Disconnect and clean up the per-user KiteTicker. */
+    /**
+     * Disconnect and clean up the per-user KiteTicker.
+     */
     public void disconnectKiteTicker() {
         if (kiteTicker != null) {
-            try { kiteTicker.disconnect(); } catch (Exception ignore) {}
+            try {
+                kiteTicker.disconnect();
+            } catch (Exception ignore) {
+            }
             kiteTicker = null;
         }
         tickerConnected = false;
@@ -178,7 +193,9 @@ public class UserTradingEngine {
         }
     }
 
-    /** Called by KiteTicker's arrival listener — LIVE mode only. */
+    /**
+     * Called by KiteTicker's arrival listener — LIVE mode only.
+     */
     private void onKiteTicksArrived(ArrayList<Tick> ticks) {
         if (ticks == null) return;
         for (Tick t : ticks) {
@@ -195,7 +212,7 @@ public class UserTradingEngine {
     /**
      * Entry point for PAPER-mode ticks pushed by TradingEngineRegistry.
      * Ticks come from the global KiteTicker (admin's Kite connection).
-     *
+     * <p>
      * For LIVE mode, ticks arrive directly via onKiteTicksArrived() from the
      * per-user KiteTicker — this method is NOT called in live mode.
      */
@@ -239,7 +256,7 @@ public class UserTradingEngine {
             formingCandles.put(instrument, newCandle(instrument, price, candleMinute));
         } else {
             if (price > forming.getHigh()) forming.setHigh(price);
-            if (price < forming.getLow())  forming.setLow(price);
+            if (price < forming.getLow()) forming.setLow(price);
             forming.setClose(price);
         }
     }
@@ -297,13 +314,13 @@ public class UserTradingEngine {
         }
         try {
             OrderParams p = new OrderParams();
-            p.tradingsymbol   = instrument;
-            p.exchange        = Constants.EXCHANGE_NFO;
+            p.tradingsymbol = instrument;
+            p.exchange = Constants.EXCHANGE_NFO;
             p.transactionType = Constants.TRANSACTION_TYPE_BUY;
-            p.orderType       = Constants.ORDER_TYPE_MARKET;
-            p.quantity        = qty;
-            p.product         = Constants.PRODUCT_MIS;
-            p.validity        = Constants.VALIDITY_DAY;
+            p.orderType = Constants.ORDER_TYPE_MARKET;
+            p.quantity = qty;
+            p.product = Constants.PRODUCT_MIS;
+            p.validity = Constants.VALIDITY_DAY;
             OrderResponse order = kiteConnect.placeOrder(p, Constants.VARIETY_REGULAR);
             log.info("[{}][LIVE] BUY {} x{} → orderId={}", username, instrument, qty, order.orderId);
             return getLtp(instrument);
@@ -320,13 +337,13 @@ public class UserTradingEngine {
         }
         try {
             OrderParams p = new OrderParams();
-            p.tradingsymbol   = instrument;
-            p.exchange        = Constants.EXCHANGE_NFO;
+            p.tradingsymbol = instrument;
+            p.exchange = Constants.EXCHANGE_NFO;
             p.transactionType = Constants.TRANSACTION_TYPE_SELL;
-            p.orderType       = Constants.ORDER_TYPE_MARKET;
-            p.quantity        = qty;
-            p.product         = Constants.PRODUCT_MIS;
-            p.validity        = Constants.VALIDITY_DAY;
+            p.orderType = Constants.ORDER_TYPE_MARKET;
+            p.quantity = qty;
+            p.product = Constants.PRODUCT_MIS;
+            p.validity = Constants.VALIDITY_DAY;
             OrderResponse order = kiteConnect.placeOrder(p, Constants.VARIETY_REGULAR);
             log.info("[{}][LIVE] SELL {} x{} → orderId={}", username, instrument, qty, order.orderId);
             return getLtp(instrument);
@@ -363,8 +380,8 @@ public class UserTradingEngine {
      */
 
     public synchronized TradeSession startSession(TradingConfig config,
-                                                   Map<Long, String> instruments,
-                                                   String startedBy) {
+                                                  Map<Long, String> instruments,
+                                                  String startedBy) {
         // Reset candle state
         formingCandles.clear();
 
@@ -437,7 +454,9 @@ public class UserTradingEngine {
         return session;
     }
 
-    /** Manual stop — exits open position and marks session STOPPED. */
+    /**
+     * Manual stop — exits open position and marks session STOPPED.
+     */
     public synchronized TradeSession stopSession() {
         if (session == null) throw new IllegalStateException("No active session for user: " + username);
         if (session.getState() == StrategyState.IN_POSITION) {
@@ -449,7 +468,9 @@ public class UserTradingEngine {
         return session;
     }
 
-    /** Restore a previously persisted session (crash recovery). */
+    /**
+     * Restore a previously persisted session (crash recovery).
+     */
     public synchronized void restoreSession(TradeSession restored) {
         this.session = restored;
         // Re-register instruments from config for candle routing
@@ -471,7 +492,9 @@ public class UserTradingEngine {
                 restored.getSessionId(), restored.getState());
     }
 
-    /** Called by TradingEngineRegistry's @Scheduled EOD job. */
+    /**
+     * Called by TradingEngineRegistry's @Scheduled EOD job.
+     */
     public synchronized void squareOffEod() {
         if (session == null) return;
         if (session.getState() == StrategyState.STOPPED
@@ -505,7 +528,7 @@ public class UserTradingEngine {
         if (openLeg == null || !instrument.equals(openLeg.getInstrument())) return;
 
         double liveLegPnL = (ltp - openLeg.getEntryPrice()) * openLeg.getQuantity();
-        double totalPnL   = session.getTotalRealizedPnL() + liveLegPnL;
+        double totalPnL = session.getTotalRealizedPnL() + liveLegPnL;
         TradingConfig cfg = session.getConfig();
 
         // Always update openPnL for live UI
@@ -570,7 +593,7 @@ public class UserTradingEngine {
         log.debug("[{}] Candle: time={}, close={}", username, candle.getOpenTime(), candle.getClose());
 
         LocalTime candleTime = candle.getOpenTime().toLocalTime();
-        LocalTime startTime  = cfg.getStartCandleTime();
+        LocalTime startTime = cfg.getStartCandleTime();
 
         // BUG FIX: update openPnL BEFORE strategy checks so candle-close P&L is fresh
         updateOpenPnL();
@@ -586,13 +609,17 @@ public class UserTradingEngine {
     }
 
     private void handleWaitingForCandles(Candle candle, LocalTime candleTime, LocalTime startTime) {
+        log.debug("Session Data : {}", session);
         if (session.getFirstCandle() == null) {
+            log.debug("Session Data for first candle : {}", session);
+            log.debug("StartTime : {}, candleTime : {}", startTime, candleTime);
             if (!candleTime.isBefore(startTime)) {
                 candle.setCandleIndex(1);
                 session.setFirstCandle(candle);
                 log.info("[{}] 1st candle: time={}, close={}", username, candleTime, candle.getClose());
             }
         } else if (session.getSecondCandle() == null) {
+            log.debug("Session Data for second candle : {}", session);
             candle.setCandleIndex(2);
             session.setSecondCandle(candle);
             log.info("[{}] 2nd candle: time={}, close={} → entering at 3rd candle open",
@@ -602,10 +629,10 @@ public class UserTradingEngine {
     }
 
     private void enterInitialPosition() {
-        TradingConfig cfg   = session.getConfig();
-        double close1       = session.getFirstCandle().getClose();
-        double close2       = session.getSecondCandle().getClose();
-        double niftyPrice   = close2 > 0 ? close2 : getLtp(cfg.getFuturesInstrument());
+        TradingConfig cfg = session.getConfig();
+        double close1 = session.getFirstCandle().getClose();
+        double close2 = session.getSecondCandle().getClose();
+        double niftyPrice = close2 > 0 ? close2 : getLtp(cfg.getFuturesInstrument());
         if (niftyPrice <= 0) niftyPrice = close1;
 
         optionInstrumentService.resolveAndLockInstruments(cfg, session, niftyPrice);
@@ -643,7 +670,9 @@ public class UserTradingEngine {
         seedLtp(peSymbol);
     }
 
-    /** Fetch LTP and seed the per-user price cache. */
+    /**
+     * Fetch LTP and seed the per-user price cache.
+     */
     private void seedLtp(String instrument) {
         if (priceCache.getOrDefault(instrument, 0.0) > 0) return;  // already warm
 
@@ -674,15 +703,15 @@ public class UserTradingEngine {
 
     private void handleInPosition(Candle candle) {
         session.setLastClosedCandle(candle);
-        TradingConfig cfg   = session.getConfig();
-        TradeEntry openLeg  = session.getCurrentOpenLeg();
+        TradingConfig cfg = session.getConfig();
+        TradeEntry openLeg = session.getCurrentOpenLeg();
         if (openLeg == null) return;
 
         double currentClose = candle.getClose();
-        double firstClose   = session.getFirstCandle().getClose();
+        double firstClose = session.getFirstCandle().getClose();
 
         boolean shouldReverse = false;
-        OptionType newDir     = null;
+        OptionType newDir = null;
 
         if (openLeg.getOptionType() == OptionType.CE && currentClose < firstClose) {
             shouldReverse = true;
@@ -725,10 +754,10 @@ public class UserTradingEngine {
     }
 
     private void enterPosition(OptionType optionType, String reason) {
-        TradingConfig cfg  = session.getConfig();
-        String instrument  = optionType == OptionType.CE
+        TradingConfig cfg = session.getConfig();
+        String instrument = optionType == OptionType.CE
                 ? session.getLockedCeInstrument() : session.getLockedPeInstrument();
-        int strikePrice    = optionType == OptionType.CE
+        int strikePrice = optionType == OptionType.CE
                 ? session.getLockedCeStrike() : session.getLockedPeStrike();
 
         double ltp = getLtp(instrument);
@@ -822,7 +851,10 @@ public class UserTradingEngine {
 
     private void updateOpenPnL() {
         TradeEntry openLeg = session.getCurrentOpenLeg();
-        if (openLeg == null) { session.setOpenPnL(0); return; }
+        if (openLeg == null) {
+            session.setOpenPnL(0);
+            return;
+        }
         double ltp = getLtp(openLeg.getInstrument());
         if (ltp > 0) {
             session.setOpenPnL((ltp - openLeg.getEntryPrice()) * openLeg.getQuantity());
@@ -830,10 +862,10 @@ public class UserTradingEngine {
     }
 
     private void checkExitConditions() {
-        TradingConfig cfg    = session.getConfig();
-        double totalPnl      = session.getTotalPnL();
-        double trailingStep  = cfg.getTrailingProfit();
-        boolean useTrailing  = trailingStep > 0;
+        TradingConfig cfg = session.getConfig();
+        double totalPnl = session.getTotalPnL();
+        double trailingStep = cfg.getTrailingProfit();
+        boolean useTrailing = trailingStep > 0;
 
         if (totalPnl <= -cfg.getStopLoss()) {
             log.info("[{}] Stop loss hit: {} <= -{}", username, totalPnl, cfg.getStopLoss());
@@ -874,10 +906,10 @@ public class UserTradingEngine {
     }
 
     private boolean isPnLExitTriggered() {
-        TradingConfig cfg    = session.getConfig();
-        double totalPnl      = session.getTotalPnL();
-        double trailingStep  = cfg.getTrailingProfit();
-        boolean useTrailing  = trailingStep > 0;
+        TradingConfig cfg = session.getConfig();
+        double totalPnl = session.getTotalPnL();
+        double trailingStep = cfg.getTrailingProfit();
+        boolean useTrailing = trailingStep > 0;
 
         if (totalPnl <= -cfg.getStopLoss()) {
             internalStopSession("Stop loss hit after reversal: " + totalPnl);
@@ -916,14 +948,14 @@ public class UserTradingEngine {
     public AlgoStatusResponse buildStatusResponse() {
         if (session == null) return null;
 
-        TradingConfig cfg   = session.getConfig();
-        TradeEntry openLeg  = session.getCurrentOpenLeg();
+        TradingConfig cfg = session.getConfig();
+        TradeEntry openLeg = session.getCurrentOpenLeg();
 
         String status = switch (session.getState()) {
             case WAITING_FOR_CANDLES -> "WAITING";
-            case IN_POSITION         -> "RUNNING";
-            case STOPPED             -> resolveStopStatus(session.getStopReason());
-            default                  -> "STOPPED";
+            case IN_POSITION -> "RUNNING";
+            case STOPPED -> resolveStopStatus(session.getStopReason());
+            default -> "STOPPED";
         };
 
         double liveOpenPnL = 0;
@@ -932,7 +964,7 @@ public class UserTradingEngine {
             double ltp = getLtp(openLeg.getInstrument());
             if (ltp > 0) {
                 currentPrice = ltp;
-                liveOpenPnL  = (ltp - openLeg.getEntryPrice()) * openLeg.getQuantity();
+                liveOpenPnL = (ltp - openLeg.getEntryPrice()) * openLeg.getQuantity();
             }
         }
         double liveTotalPnL = session.getTotalRealizedPnL() + liveOpenPnL;
@@ -999,12 +1031,12 @@ public class UserTradingEngine {
     private String resolveStopStatus(String reason) {
         if (reason == null) return "STOPPED";
         String r = reason.toLowerCase();
-        if (r.contains("trailing stop"))  return "TRAILING_STOP";
-        if (r.contains("target"))         return "TARGET_HIT";
+        if (r.contains("trailing stop")) return "TRAILING_STOP";
+        if (r.contains("target")) return "TARGET_HIT";
         if (r.contains("stop loss") || r.contains("sl")) return "SL_HIT";
-        if (r.contains("max reversal"))   return "MAX_REVERSALS";
+        if (r.contains("max reversal")) return "MAX_REVERSALS";
         if (r.contains("end of day") || r.contains("eod")) return "EOD";
-        if (r.contains("recovered"))      return "RECOVERED";
+        if (r.contains("recovered")) return "RECOVERED";
         return "STOPPED";
     }
 
@@ -1012,7 +1044,9 @@ public class UserTradingEngine {
     //  HELPERS
     // ═══════════════════════════════════════════════════════════════════════
 
-    /** Broadcast to the user-specific WebSocket topic. UI subscribes to /topic/trade-updates/{username}. */
+    /**
+     * Broadcast to the user-specific WebSocket topic. UI subscribes to /topic/trade-updates/{username}.
+     */
     private void broadcastUpdate() {
         if (session == null) return;
         try {
@@ -1024,7 +1058,9 @@ public class UserTradingEngine {
         }
     }
 
-    /** Update the user's Kite access token at runtime (e.g. after daily OAuth login). */
+    /**
+     * Update the user's Kite access token at runtime (e.g. after daily OAuth login).
+     */
     public void updateKiteAccessToken(String newToken) {
         if (kiteConnect == null && platformUser.getKiteApiKey() != null) {
             kiteConnect = new KiteConnect(platformUser.getKiteApiKey());
@@ -1038,8 +1074,10 @@ public class UserTradingEngine {
     public boolean isActive() {
         return session != null
                 && (session.getState() == StrategyState.WAITING_FOR_CANDLES
-                 || session.getState() == StrategyState.IN_POSITION);
+                || session.getState() == StrategyState.IN_POSITION);
     }
 
-    public boolean isTickerConnected() { return tickerConnected; }
+    public boolean isTickerConnected() {
+        return tickerConnected;
+    }
 }
