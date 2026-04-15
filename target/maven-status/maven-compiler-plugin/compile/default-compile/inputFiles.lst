@@ -11,6 +11,7 @@ D:\AlgoTradingBackend\src\main\java\com\algotrading\backend\controller\AdminCont
 D:\AlgoTradingBackend\src\main\java\com\algotrading\backend\service\KiteAuthService.java
 D:\AlgoTradingBackend\src\main\java\com\algotrading\backend\model\StrikeMode.java
 D:\AlgoTradingBackend\src\main\java\com\algotrading\backend\service\UserRegistryService.java
+D:\AlgoTradingBackend\src\main\java\com\algotrading\backend\service\TelegramService.java
 D:\AlgoTradingBackend\src\main\java\com\algotrading\backend\service\OptionInstrumentService.java
 D:\AlgoTradingBackend\src\main\java\com\algotrading\backend\service\KiteRestPollService.java
 D:\AlgoTradingBackend\src\main\java\com\algotrading\backend\broker\BrokerServiceFactory.java
@@ -19,6 +20,7 @@ D:\AlgoTradingBackend\src\main\java\com\algotrading\backend\websocket\TradeWebSo
 D:\AlgoTradingBackend\src\main\java\com\algotrading\backend\service\KiteInstrumentService.java
 D:\AlgoTradingBackend\src\main\java\com\algotrading\backend\service\CandleAggregatorService.java
 D:\AlgoTradingBackend\src\main\java\com\algotrading\backend\controller\AlgoController.java
+D:\AlgoTradingBackend\src\main\java\com\algotrading\backend\dto\AlgoUpdateParamsRequest.java
 D:\AlgoTradingBackend\src\main\java\com\algotrading\backend\service\ConfigService.java
 D:\AlgoTradingBackend\src\main\java\com\algotrading\backend\model\PlatformUser.java
 D:\AlgoTradingBackend\src\main\java\com\algotrading\backend\dto\OptionChainResponse.java

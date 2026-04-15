@@ -43,7 +43,7 @@
     </div>
   </nav>
 
-  <!-- KITE CONNECT BANNER (shown when not connected) -->
+  <!-- KITE CONNECT BANNER -->
   <div id="kite-banner" class="kite-banner">
     <div>
       <span>⚠️ Kite not connected — connect once to start receiving live tick data.</span>
@@ -70,7 +70,6 @@
           <label>Futures Instrument</label>
           <select id="cfg-futures" onchange="onFuturesChange()">
             <option>Select Futures...</option>
-<!--            <option value="NIFTY25APRFUT">NIFTY25APRFUT</option>-->
           </select>
         </div>
         <div class="form-group">
@@ -86,8 +85,8 @@
         <div class="form-group">
           <label>Strike Mode</label>
           <select id="cfg-strike-mode" onchange="onStrikeModeChange()">
+            <option value="MANUAL" selected>Manual Strike</option>
             <option value="AUTO_ATM">Auto ATM</option>
-            <option value="MANUAL">Manual Strike</option>
           </select>
         </div>
         <div class="form-group">
@@ -99,8 +98,8 @@
         </div>
       </div>
 
-      <!-- MANUAL STRIKE SELECTION (hidden in AUTO mode) -->
-      <div id="manual-strike-section" style="display:none">
+      <!-- MANUAL STRIKE SELECTION -->
+      <div id="manual-strike-section">
         <div class="form-row">
           <div class="form-group">
             <label>CE Strike</label>
@@ -125,7 +124,6 @@
           <label>Start Candle Time
             <span id="start-time-hint" style="font-size:11px;color:#f59e0b;margin-left:4px;">(future minute only)</span>
           </label>
-          <!-- Options populated dynamically by populateStartTimes() in app.js -->
           <select id="cfg-start-time" onfocus="populateStartTimes()" onclick="populateStartTimes()"></select>
         </div>
         <div class="form-group">
@@ -152,8 +150,14 @@
           <input type="number" id="cfg-target" value="5000" min="1"/>
         </div>
         <div class="form-group">
-          <label>Stop Loss (₹)</label>
-          <input type="number" id="cfg-sl" value="2000" min="1"/>
+          <label style="display:flex;align-items:center;gap:8px;">
+            Stop Loss (₹)
+            <label style="display:flex;align-items:center;gap:4px;font-size:11px;color:#94a3b8;cursor:pointer;text-transform:none;letter-spacing:0;">
+              <input type="checkbox" id="sl-enabled" style="width:14px;height:14px;cursor:pointer;" onchange="toggleSlEnabled()"/>
+              Enable SL
+            </label>
+          </label>
+          <input type="number" id="cfg-sl" value="2000" min="1" disabled style="opacity:0.5;"/>
         </div>
       </div>
 
@@ -187,6 +191,34 @@
         <button id="btn-stop" class="btn btn-danger btn-lg" onclick="stopStrategy()" disabled>⏹ Stop Strategy</button>
       </div>
 
+      <!-- LIVE PARAMS EDITOR (shown when strategy is active or stopped) -->
+      <div id="live-params-section" class="hidden"
+           style="margin-top:12px;padding:12px 14px;border-radius:8px;background:rgba(31,111,235,0.06);border:1px solid rgba(31,111,235,0.2);">
+        <div style="font-size:12px;font-weight:600;color:#58a6ff;margin-bottom:8px;">⚙️ Live Parameter Edit</div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;">
+          <div class="form-group" style="flex:1;min-width:100px;">
+            <label>Target (₹)</label>
+            <input type="number" id="live-target" placeholder="Target"/>
+          </div>
+          <div class="form-group" style="flex:1;min-width:100px;">
+            <label style="display:flex;align-items:center;gap:6px;">
+              SL (₹)
+              <label style="display:flex;align-items:center;gap:3px;font-size:11px;color:#94a3b8;cursor:pointer;text-transform:none;letter-spacing:0;">
+                <input type="checkbox" id="live-sl-enabled" style="width:13px;height:13px;" onchange="toggleLiveSlEnabled()"/>
+                On
+              </label>
+            </label>
+            <input type="number" id="live-sl" placeholder="Stop Loss" disabled style="opacity:0.5;"/>
+          </div>
+          <div class="form-group" style="flex:1;min-width:100px;">
+            <label>Trailing Step (₹)</label>
+            <input type="number" id="live-trailing" placeholder="0 = off"/>
+          </div>
+          <button class="btn btn-sm btn-primary" style="margin-bottom:2px;" onclick="updateLiveParams()">💾 Update</button>
+        </div>
+        <div id="live-params-msg" class="msg-box hidden" style="margin-top:6px;"></div>
+      </div>
+
       <!-- LIVE NIFTY PRICES -->
       <div class="price-grid">
         <div class="price-card">
@@ -203,7 +235,7 @@
         </div>
       </div>
 
-      <!-- ACTIVE CONFIG STRIP (shown only when strategy is running/stopped) -->
+      <!-- ACTIVE CONFIG STRIP -->
       <div id="active-config-strip" class="active-config-strip hidden">
         <div class="cfg-chip" id="cfg-chip-future">—</div>
         <div class="cfg-chip cfg-chip-time" id="cfg-chip-time">—</div>
@@ -272,7 +304,10 @@
 
     <!-- RIGHT: P&L + TRADE LEGS -->
     <section class="panel" id="pnl-panel">
-      <h3 class="panel-title">P&amp;L Summary</h3>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+        <h3 class="panel-title" style="margin-bottom:0;">P&amp;L Summary</h3>
+        <button class="btn btn-sm btn-outline" onclick="resetPnl()" title="Clear P&L display">🔄 Reset P&L</button>
+      </div>
 
       <div class="pnl-grid">
         <div class="pnl-card">
@@ -309,7 +344,7 @@
         </div>
       </div>
 
-      <!-- TRAILING PROFIT STATUS (hidden when disabled) -->
+      <!-- TRAILING PROFIT STATUS -->
       <div id="trailing-status-box" class="hidden"
            style="margin-top:10px;padding:10px 14px;border-radius:8px;
                   background:rgba(245,158,11,0.08);border:1px solid rgba(245,158,11,0.25);
@@ -333,18 +368,19 @@
               <th>Entry Price</th>
               <th>Entry Time</th>
               <th>Exit Price</th>
+              <th>Exit Time</th>
               <th>P&L (₹)</th>
               <th>Reason / Status</th>
             </tr>
           </thead>
           <tbody id="legs-body">
-            <tr><td colspan="7" class="empty-row">No trades yet</td></tr>
+            <tr><td colspan="8" class="empty-row">No trades yet</td></tr>
           </tbody>
         </table>
       </div>
     </section>
 
-  </div><!-- end main-grid -->
+  </div>
 
   <!-- FOOTER STATUS BAR -->
   <footer class="status-bar">
@@ -353,7 +389,7 @@
     <span id="footer-ws">WS: Disconnected</span>
   </footer>
 
-</div><!-- end dashboard -->
+</div>
 
 <!-- TOAST NOTIFICATION CONTAINER -->
 <div id="toast-container"></div>
