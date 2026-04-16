@@ -46,6 +46,8 @@ public class AlgoStatusResponse {
     private CandleInfo secondCandle;
     private CandleInfo thirdCandle;
     private List<HistoryRow> history;
+    private String  lockedCeInstrument;
+    private String  lockedPeInstrument;
 
     @Data
     @Builder

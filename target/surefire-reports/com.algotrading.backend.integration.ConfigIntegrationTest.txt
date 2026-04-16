@@ -1,4 +1,0 @@
--------------------------------------------------------------------------------
-Test set: com.algotrading.backend.integration.ConfigIntegrationTest
--------------------------------------------------------------------------------
-Tests run: 7, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 5.951 s -- in com.algotrading.backend.integration.ConfigIntegrationTest

@@ -300,24 +300,34 @@ public class UserTradingEngine {
                                                   String startedBy) {
         formingCandles.clear();
 
+        String strikeDetail = config.getStrikeMode() == StrikeMode.AUTO_ATM
+                ? "AUTO ATM"
+                : String.format("MANUAL | CE: %s | PE: %s",
+                        config.getCeInstrument() != null ? config.getCeInstrument() : "—",
+                        config.getPeInstrument() != null ? config.getPeInstrument() : "—");
+
         String startMsg = String.format(
                 "🚀 <b>Strategy Started</b>\n" +
                         "User: <code>%s</code>\n" +
-                        "Mode: <code>%s</code>\n" +
+                        "Trade Mode: <code>%s</code>\n" +
+                        "Strike Mode: <code>%s</code>\n" +
                         "Futures: <code>%s</code>\n" +
                         "Expiry: <code>%s</code>\n" +
-                        "Lots: <code>%d</code>\n" +
-                        "Qty: <code>%d</code>\n" +
-                        "SL: <code>%.2f</code>\n" +
-                        "Target: <code>%.2f</code>",
+                        "Start Time: <code>%s</code>\n" +
+                        "Lots: <code>%d</code>  Qty: <code>%d</code>\n" +
+                        "SL: <code>%s</code>  Target: <code>%.2f</code>\n" +
+                        "Trailing: <code>%s</code>",
                 username,
                 config.getTradeMode(),
+                strikeDetail,
                 config.getFuturesInstrument(),
                 config.getExpiryType(),
+                config.getStartCandleTime() != null ? config.getStartCandleTime().toString() : "—",
                 config.getLotQuantity(),
                 config.getTotalQuantity(),
-                config.getStopLoss(),
-                config.getTargetProfit()
+                config.getStopLoss() > 0 ? String.format("%.2f", config.getStopLoss()) : "OFF",
+                config.getTargetProfit(),
+                config.getTrailingProfit() > 0 ? String.format("%.2f", config.getTrailingProfit()) : "OFF"
         );
         telegramService.sendStrategyMessage(startMsg);
 
@@ -643,16 +653,19 @@ public class UserTradingEngine {
                 .expiryType(cfg.getExpiryType())
                 .quantity(cfg.getTotalQuantity())
                 .entryPrice(entryPrice)
-                .entryTime(LocalDateTime.now())
+                .entryTime(LocalDateTime.now(ZoneId.of("Asia/Kolkata")))
                 .closed(false)
                 .build();
 
         session.setCurrentLegNumber(leg.getLegNumber());
         session.getTradeLegs().add(leg);
 
+        int effectiveStrike = strikePrice > 0 ? strikePrice : parseStrikeFromSymbol(instrument);
         String msg = String.format(
-                "✅ <b>Position Entered</b>\nType: <code>%s</code>\nInstrument: <code>%s</code>\nStrike: <code>%d</code>\nPrice: <code>%.2f</code>\nQty: <code>%d</code>\nReason: <code>%s</code>",
-                optionType, instrument, strikePrice, entryPrice, leg.getQuantity(), reason);
+                "✅ <b>Position Entered</b>\nType: <code>%s</code>\nInstrument: <code>%s</code>\nStrike: <code>%s</code>\nPrice: <code>%.2f</code>\nQty: <code>%d</code>\nReason: <code>%s</code>",
+                optionType, instrument,
+                effectiveStrike > 0 ? String.valueOf(effectiveStrike) : "—",
+                entryPrice, leg.getQuantity(), reason);
         telegramService.sendStrategyMessage(msg);
 
         log.info("[{}] Entered leg={} type={} instrument={} entry={} reason={}",
@@ -788,16 +801,14 @@ public class UserTradingEngine {
     private void sendTelegramSummary(String stopReason) {
         try {
             TradingConfig cfg = session.getConfig();
-            ZoneId ist = ZoneId.of("Asia/Kolkata");
 
             String firstCandleInfo = "—";
             if (session.getFirstCandle() != null) {
                 Candle c = session.getFirstCandle();
                 String t = c.getOpenTime() != null
-                        ? c.getOpenTime().atZone(ZoneId.systemDefault()).withZoneSameInstant(ist)
-                              .toLocalTime().toString().substring(0, 5)
+                        ? c.getOpenTime().toLocalTime().toString().substring(0, 5)
                         : "—";
-                firstCandleInfo = String.format("Time: %s | Close: %.2f", t, c.getClose());
+                firstCandleInfo = String.format("Time: %s IST | Close: %.2f", t, c.getClose());
             }
 
             String lastCandleInfo = "—";
@@ -805,10 +816,9 @@ public class UserTradingEngine {
                     ? session.getLastClosedCandle() : session.getSecondCandle();
             if (lastC != null) {
                 String t = lastC.getOpenTime() != null
-                        ? lastC.getOpenTime().atZone(ZoneId.systemDefault()).withZoneSameInstant(ist)
-                              .toLocalTime().toString().substring(0, 5)
+                        ? lastC.getOpenTime().toLocalTime().toString().substring(0, 5)
                         : "—";
-                lastCandleInfo = String.format("Time: %s | Close: %.2f", t, lastC.getClose());
+                lastCandleInfo = String.format("Time: %s IST | Close: %.2f", t, lastC.getClose());
             }
 
             String strategyDirection = "—";
@@ -816,44 +826,31 @@ public class UserTradingEngine {
                 strategyDirection = session.getTradeLegs().get(0).getOptionType().name();
             }
 
-            StringBuilder tableRows = new StringBuilder();
-            for (TradeEntry leg : session.getTradeLegs()) {
-                String entryT = leg.getEntryTime() != null
-                        ? leg.getEntryTime().atZone(ZoneId.systemDefault()).withZoneSameInstant(ist)
-                              .toLocalTime().toString().substring(0, 8)
-                        : "—";
-                String exitT = leg.getExitTime() != null
-                        ? leg.getExitTime().toLocalTime().toString().substring(0, 8)
-                        : "OPEN";
-                tableRows.append(String.format(
-                        "<tr><td>%d</td><td>%s</td><td>%.2f</td><td>%s</td><td>%.2f</td><td>%s</td><td>%.0f</td><td>%s</td></tr>",
-                        leg.getLegNumber(),
-                        leg.getOptionType().name(),
-                        leg.getEntryPrice(),
-                        entryT,
-                        leg.getExitPrice(),
-                        exitT,
-                        leg.getPnl(),
-                        leg.isClosed() ? leg.getExitReason() : "OPEN"
-                ));
-            }
+            String strikeInfo = cfg.getStrikeMode() == StrikeMode.AUTO_ATM
+                    ? String.format("AUTO ATM | CE: %s | PE: %s",
+                            session.getLockedCeInstrument() != null ? session.getLockedCeInstrument() : "—",
+                            session.getLockedPeInstrument() != null ? session.getLockedPeInstrument() : "—")
+                    : String.format("MANUAL | CE: %s | PE: %s",
+                            session.getLockedCeInstrument() != null ? session.getLockedCeInstrument() : "—",
+                            session.getLockedPeInstrument() != null ? session.getLockedPeInstrument() : "—");
 
             String startT = session.getStartTime() != null
-                    ? session.getStartTime().atZone(ZoneId.systemDefault()).withZoneSameInstant(ist)
-                          .format(IST_FMT)
+                    ? session.getStartTime().format(IST_FMT) + " IST"
                     : "—";
             String endT = session.getEndTime() != null
-                    ? session.getEndTime().format(IST_FMT)
-                    : LocalDateTime.now(ist).format(IST_FMT);
+                    ? session.getEndTime().format(IST_FMT) + " IST"
+                    : LocalDateTime.now(ZoneId.of("Asia/Kolkata")).format(IST_FMT) + " IST";
 
             double totalPnl = session.getCumulativePnL();
 
             String html = String.format(
-                    "📊 <b>Strategy Summary — %s</b>\n\n" +
+                    "📊 <b>Strategy Summary</b>\n\n" +
                     "User: <code>%s</code>\n" +
                     "Strategy: <code>%s</code>\n" +
+                    "Strike: <code>%s</code>\n" +
                     "Futures: <code>%s</code>  |  Expiry: <code>%s</code>\n" +
-                    "Start: <code>%s</code>  |  End: <code>%s</code>\n" +
+                    "Start: <code>%s</code>\n" +
+                    "End: <code>%s</code>\n" +
                     "Stop Reason: <code>%s</code>\n\n" +
                     "📌 First Candle: <code>%s</code>\n" +
                     "📌 Last Candle: <code>%s</code>\n\n" +
@@ -863,9 +860,9 @@ public class UserTradingEngine {
                     "%s" +
                     "</pre>\n\n" +
                     "💰 <b>Total P&amp;L: %.0f</b>",
-                    stopReason,
                     username,
                     strategyDirection,
+                    strikeInfo,
                     cfg.getFuturesInstrument(),
                     cfg.getExpiryType(),
                     startT,
@@ -884,13 +881,18 @@ public class UserTradingEngine {
         }
     }
 
+    private int parseStrikeFromSymbol(String instrument) {
+        if (instrument == null) return 0;
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile("(\\d{4,6})(CE|PE)$")
+                .matcher(instrument);
+        return m.find() ? Integer.parseInt(m.group(1)) : 0;
+    }
+
     private String buildTextTable() {
-        ZoneId ist = ZoneId.of("Asia/Kolkata");
         StringBuilder sb = new StringBuilder();
         for (TradeEntry leg : session.getTradeLegs()) {
             String entryT = leg.getEntryTime() != null
-                    ? leg.getEntryTime().atZone(ZoneId.systemDefault()).withZoneSameInstant(ist)
-                          .toLocalTime().toString().substring(0, 8)
+                    ? leg.getEntryTime().toLocalTime().toString().substring(0, 8)
                     : "—";
             String exitT = leg.getExitTime() != null
                     ? leg.getExitTime().toLocalTime().toString().substring(0, 8)
@@ -981,6 +983,8 @@ public class UserTradingEngine {
                 .secondCandle(toCandleInfo(session.getSecondCandle()))
                 .thirdCandle(toCandleInfo(session.getThirdCandle()))
                 .history(history)
+                .lockedCeInstrument(session.getLockedCeInstrument())
+                .lockedPeInstrument(session.getLockedPeInstrument())
                 .build();
     }
 

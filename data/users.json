@@ -5,7 +5,7 @@
     "passwordHash": "$2a$10$zgUP/rkRUKbiAK7xHYkZZ.hwfz0AdxZ5X7b4BeLw/NWKxR6/z23gG",
     "role": "ADMIN",
     "enabled": true,
-    "maxLotSize": 10,
+    "maxLotSize": 50,
     "planExpiryDate": [
       2099,
       12,
@@ -41,7 +41,7 @@
     "passwordHash": "$2a$10$zgUP/rkRUKbiAK7xHYkZZ.hwfz0AdxZ5X7b4BeLw/NWKxR6/z23gG",
     "role": "ADMIN",
     "enabled": true,
-    "maxLotSize": 10,
+    "maxLotSize": 50,
     "planExpiryDate": [
       2099,
       12,

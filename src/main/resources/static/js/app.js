@@ -270,6 +270,11 @@ function onStrikeModeChange() {
   const mode = document.getElementById('cfg-strike-mode').value;
   document.getElementById('manual-strike-section').style.display =
     mode === 'MANUAL' ? 'block' : 'none';
+  const expiryEl = document.getElementById('cfg-expiry');
+  if (expiryEl) {
+    expiryEl.disabled = mode === 'AUTO_ATM';
+    expiryEl.style.opacity = mode === 'AUTO_ATM' ? '0.4' : '1';
+  }
 }
 
 function toggleSlEnabled() {
@@ -349,6 +354,17 @@ async function startStrategy() {
   if (!savedConfig) await saveConfig();
 
   pnlFrozen = false;
+
+  document.getElementById('ce-label').textContent = 'CE';
+  document.getElementById('pe-label').textContent = 'PE';
+  document.getElementById('price-ce').textContent = '—';
+  document.getElementById('price-pe').textContent = '—';
+  document.getElementById('s-locked-ce').textContent = '—';
+  document.getElementById('s-locked-pe').textContent = '—';
+  const ccEl = document.getElementById('cfg-chip-ce');
+  const cpEl = document.getElementById('cfg-chip-pe');
+  if (ccEl) ccEl.textContent = 'CE —';
+  if (cpEl) cpEl.textContent = 'PE —';
 
   setStrategyButtonsLoading(true);
   try {
@@ -458,6 +474,8 @@ function renderSession(s) {
     setText('cfg-chip-lots',   (s.lotQuantity || 1) + ' lot × 65 = ' + (s.totalQuantity || 65) + ' qty');
     setText('cfg-chip-mode',   s.paperTrade ? '📄 Paper' : '🔴 Live');
     setText('cfg-chip-strike', s.strikeMode === 'AUTO_ATM' ? '🎯 Auto ATM' : '✋ Manual Strike');
+    if (s.lockedCeInstrument) setText('cfg-chip-ce', 'CE: ' + s.lockedCeInstrument);
+    if (s.lockedPeInstrument) setText('cfg-chip-pe', 'PE: ' + s.lockedPeInstrument);
   }
 
   const stateEl = document.getElementById('s-state');
