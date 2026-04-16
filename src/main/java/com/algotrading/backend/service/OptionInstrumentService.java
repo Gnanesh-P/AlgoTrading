@@ -126,10 +126,21 @@ public class OptionInstrumentService {
         int tradingDaysToExpiry = countTradingDays(today, expiry);
 
         if (tradingDaysToExpiry <= 1) {
-            log.info("AUTO expiry: {} trading day(s) to {}, switching to next week", tradingDaysToExpiry, expiry);
-            expiry = findWeeklyExpiry(expiry.plusDays(1));
+            LocalDate nextExpiry = findExpiryAfter(expiry);
+            log.info("AUTO expiry: {} trading day(s) to {}, switching to {}", tradingDaysToExpiry, expiry, nextExpiry);
+            expiry = nextExpiry;
         }
         return expiry;
+    }
+
+    private LocalDate findExpiryAfter(LocalDate after) {
+        LocalDate search = after.plusDays(1);
+        LocalDate candidate;
+        do {
+            candidate = findWeeklyExpiry(search);
+            search = search.plusDays(7);
+        } while (!candidate.isAfter(after));
+        return candidate;
     }
 
     private LocalDate getExpiryDate(ExpiryType expiryType) {
