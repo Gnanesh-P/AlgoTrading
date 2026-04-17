@@ -65,23 +65,23 @@ public class OptionInstrumentService {
 
     public String buildInstrumentKey(int strikePrice, String optionType, ExpiryType expiryType) {
         LocalDate expiry = getExpiryDate(expiryType);
-        String monthYear = expiry.format(DateTimeFormatter.ofPattern("yyMMM")).toUpperCase();
-        return "NIFTY" + monthYear + strikePrice + optionType;
+        String dateKey = expiry.format(DateTimeFormatter.ofPattern("yyddMMM")).toUpperCase();
+        return "NIFTY" + dateKey + strikePrice + optionType;
     }
 
     public void resolveAndLockInstruments(TradingConfig config, TradeSession session,
                                           double currentNiftyPrice) {
         if (config.getStrikeMode() == StrikeMode.AUTO_ATM) {
             LocalDate autoExpiry = getAutoExpiryDate();
-            String monthYear = autoExpiry.format(DateTimeFormatter.ofPattern("yyMMM")).toUpperCase();
+            String dateKey = autoExpiry.format(DateTimeFormatter.ofPattern("yyddMMM")).toUpperCase();
 
             int ceStrike = computeCeStrike(currentNiftyPrice);
             int peStrike = computePeStrike(currentNiftyPrice);
 
             session.setLockedCeStrike(ceStrike);
             session.setLockedPeStrike(peStrike);
-            session.setLockedCeInstrument("NIFTY" + monthYear + ceStrike + "CE");
-            session.setLockedPeInstrument("NIFTY" + monthYear + peStrike + "PE");
+            session.setLockedCeInstrument("NIFTY" + dateKey + ceStrike + "CE");
+            session.setLockedPeInstrument("NIFTY" + dateKey + peStrike + "PE");
             log.info("AUTO_ATM: NIFTY={} → CE strike={} ({}) | PE strike={} ({})",
                     currentNiftyPrice, ceStrike, session.getLockedCeInstrument(),
                     peStrike, session.getLockedPeInstrument());
