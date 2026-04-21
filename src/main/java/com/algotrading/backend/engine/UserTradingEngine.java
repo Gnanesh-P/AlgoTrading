@@ -555,50 +555,39 @@ public class UserTradingEngine {
     }
 
     private void subscribeAndSeedAutoAtmOptions() {
-        String ceSymbol = session.getLockedCeInstrument();
-        String peSymbol = session.getLockedPeInstrument();
+        LocalDate expiry   = session.getLockedExpiry();
+        int ceStrike       = session.getLockedCeStrike();
+        int peStrike       = session.getLockedPeStrike();
 
+        if (expiry == null) {
+            log.error("[{}] AUTO_ATM: lockedExpiry is null — cannot subscribe options", username);
+            return;
+        }
+
+        // Look up by attributes (expiry date + strike + type) instead of constructed symbol name.
+        // This avoids format mismatches between our generated name and what Kite stores.
         Map<Long, String> toSub = new HashMap<>();
-        kiteInstrumentService.findBySymbol(ceSymbol)
-                .ifPresent(i -> toSub.put(i.getInstrumentToken(), ceSymbol));
-        kiteInstrumentService.findBySymbol(peSymbol)
-                .ifPresent(i -> toSub.put(i.getInstrumentToken(), peSymbol));
+
+        kiteInstrumentService.findNiftyOption(expiry, ceStrike, "CE").ifPresentOrElse(i -> {
+            toSub.put(i.getInstrumentToken(), i.getTradingsymbol());
+            session.setLockedCeInstrument(i.getTradingsymbol());  // correct name from Kite
+            log.info("[{}] AUTO_ATM CE: {} token={}", username, i.getTradingsymbol(), i.getInstrumentToken());
+        }, () -> log.warn("[{}] AUTO_ATM CE not in cache: expiry={} strike={}", username, expiry, ceStrike));
+
+        kiteInstrumentService.findNiftyOption(expiry, peStrike, "PE").ifPresentOrElse(i -> {
+            toSub.put(i.getInstrumentToken(), i.getTradingsymbol());
+            session.setLockedPeInstrument(i.getTradingsymbol());  // correct name from Kite
+            log.info("[{}] AUTO_ATM PE: {} token={}", username, i.getTradingsymbol(), i.getInstrumentToken());
+        }, () -> log.warn("[{}] AUTO_ATM PE not in cache: expiry={} strike={}", username, expiry, peStrike));
 
         if (!toSub.isEmpty()) {
             subscribeInstruments(toSub);
             kiteTickerService.subscribe(toSub);
-            log.info("[{}] AUTO_ATM: subscribed CE/PE — {}", username, toSub.values());
+            log.info("[{}] AUTO_ATM: subscribed {} instruments — ticks will arrive before 2nd candle closes",
+                    username, toSub.size());
         } else {
-            log.warn("[{}] AUTO_ATM: instrument tokens not found for CE={} PE={}", username, ceSymbol, peSymbol);
-        }
-
-        seedLtp(ceSymbol);
-        seedLtp(peSymbol);
-    }
-
-    private void seedLtp(String instrument) {
-        if (priceCache.getOrDefault(instrument, 0.0) > 0) return;
-
-        if (kiteConnect != null && platformUser.getKiteAccessToken() != null) {
-            try {
-                Map<String, LTPQuote> map = kiteConnect.getLTP(new String[]{"NFO:" + instrument});
-                LTPQuote q = map != null ? map.get("NFO:" + instrument) : null;
-                if (q != null && q.lastPrice > 0) {
-                    priceCache.put(instrument, q.lastPrice);
-                    log.info("[{}] Seeded LTP for {} via user kiteConnect: {}", username, instrument, q.lastPrice);
-                    return;
-                }
-            } catch (Exception | KiteException e) {
-                log.warn("[{}] REST LTP seed failed for {}: {}", username, instrument, e.getMessage());
-            }
-        }
-
-        double ltp = kiteInstrumentService.fetchCurrentLtp(instrument);
-        if (ltp > 0) {
-            priceCache.put(instrument, ltp);
-            log.info("[{}] Seeded LTP for {} via global Kite: {}", username, instrument, ltp);
-        } else {
-            log.warn("[{}] LTP seed returned 0 for {} — entry may abort if still 0", username, instrument);
+            log.error("[{}] AUTO_ATM: no instruments found in cache for expiry={} CE={} PE={} — Kite may not be connected",
+                    username, expiry, ceStrike, peStrike);
         }
     }
 

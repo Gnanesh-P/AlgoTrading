@@ -46,6 +46,7 @@ public class TradeSession {
     private int lockedCeStrike;
     private int lockedPeStrike;
     private String lockedExpiryLabel;  // e.g. "Current Week (29 Apr)" or "Next Week (06 May)"
+    private LocalDate lockedExpiry;     // actual expiry date used for instrument lookup
 
     // Trade legs
     @Builder.Default

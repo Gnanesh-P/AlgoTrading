@@ -89,19 +89,21 @@ public class OptionInstrumentService {
             String expiryLabel = (isNextWeek ? "Next Week" : "Current Week")
                     + " (" + autoExpiry.format(DateTimeFormatter.ofPattern("dd MMM", Locale.ENGLISH)) + ")";
 
-            String dateKey = autoExpiry.format(DateTimeFormatter.ofPattern("yyddMMM")).toUpperCase();
-
             int ceStrike = computeCeStrike(currentNiftyPrice);
             int peStrike = computePeStrike(currentNiftyPrice);
 
+            // Store expiry date — engine will resolve the real tradingsymbol from Kite cache
+            // using attribute lookup (expiry + strike + type) to avoid symbol name format issues.
             session.setLockedCeStrike(ceStrike);
             session.setLockedPeStrike(peStrike);
+            session.setLockedExpiry(autoExpiry);
+            session.setLockedExpiryLabel(expiryLabel);
+            // Placeholder names shown in UI until engine resolves real ones from cache
+            String dateKey = autoExpiry.format(DateTimeFormatter.ofPattern("yyddMMM")).toUpperCase();
             session.setLockedCeInstrument("NIFTY" + dateKey + ceStrike + "CE");
             session.setLockedPeInstrument("NIFTY" + dateKey + peStrike + "PE");
-            session.setLockedExpiryLabel(expiryLabel);
-            log.info("AUTO_ATM: NIFTY={} → CE={} PE={} expiry={} ({})",
-                    currentNiftyPrice, session.getLockedCeInstrument(),
-                    session.getLockedPeInstrument(), autoExpiry, expiryLabel);
+            log.info("AUTO_ATM: NIFTY={} → CE strike={} PE strike={} expiry={} ({})",
+                    currentNiftyPrice, ceStrike, peStrike, autoExpiry, expiryLabel);
         } else {
             session.setLockedCeStrike(config.getCeStrikePrice());
             session.setLockedPeStrike(config.getPeStrikePrice());

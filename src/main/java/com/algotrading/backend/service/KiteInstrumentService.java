@@ -142,6 +142,21 @@ public class KiteInstrumentService {
     }
 
     /**
+     * Find a NIFTY option by expiry date + strike + option type (CE or PE).
+     * More robust than symbol-name lookup — avoids format mismatches between
+     * our constructed name and what Kite actually stores in the instrument dump.
+     */
+    public Optional<KiteInstrument> findNiftyOption(LocalDate expiry, int strike, String optionType) {
+        ensureCacheLoaded();
+        return instrumentCache.stream()
+                .filter(i -> "NIFTY".equals(i.getName()))
+                .filter(i -> optionType.equals(i.getInstrumentType()))
+                .filter(i -> expiry.equals(i.getExpiry()))
+                .filter(i -> (int) i.getStrike() == strike)
+                .findFirst();
+    }
+
+    /**
      * Fetch the current live LTP for an NFO instrument via Kite REST API.
      *
      * NOTE: Do NOT use KiteInstrument.lastPrice for options — Kite's instrument
