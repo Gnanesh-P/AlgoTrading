@@ -13,6 +13,7 @@ import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
 import java.time.LocalTime;
+import java.time.ZoneId;
 import java.util.*;
 
 /**
@@ -109,7 +110,7 @@ public class KiteRestPollService {
             Map<String, LTPQuote> ltpMap = kiteConnect.getLTP(kiteKeys);
             if (ltpMap == null || ltpMap.isEmpty()) return;
 
-            LocalDateTime ts = LocalDateTime.now();
+            LocalDateTime ts = LocalDateTime.now(ZoneId.of("Asia/Kolkata"));
 
             for (Map.Entry<String, LTPQuote> entry : ltpMap.entrySet()) {
                 String kiteKey = entry.getKey();             // "NFO:NIFTY26MAYFUT"

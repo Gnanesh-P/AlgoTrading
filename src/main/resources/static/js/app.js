@@ -476,6 +476,8 @@ function renderSession(s) {
     setText('cfg-chip-strike', s.strikeMode === 'AUTO_ATM' ? '🎯 Auto ATM' : '✋ Manual Strike');
     if (s.lockedCeInstrument) setText('cfg-chip-ce', 'CE: ' + s.lockedCeInstrument);
     if (s.lockedPeInstrument) setText('cfg-chip-pe', 'PE: ' + s.lockedPeInstrument);
+    if (s.lockedExpiryLabel) setText('cfg-chip-expiry', s.lockedExpiryLabel);
+    else setText('cfg-chip-expiry', s.strikeMode === 'AUTO_ATM' ? 'Expiry: resolving...' : '—');
   }
 
   const stateEl = document.getElementById('s-state');

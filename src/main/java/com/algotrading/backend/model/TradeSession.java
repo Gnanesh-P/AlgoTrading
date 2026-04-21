@@ -45,6 +45,7 @@ public class TradeSession {
     private String lockedPeInstrument;
     private int lockedCeStrike;
     private int lockedPeStrike;
+    private String lockedExpiryLabel;  // e.g. "Current Week (29 Apr)" or "Next Week (06 May)"
 
     // Trade legs
     @Builder.Default

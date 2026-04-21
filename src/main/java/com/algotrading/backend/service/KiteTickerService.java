@@ -245,9 +245,9 @@ public class KiteTickerService {
                               .toInstant()
                               .atZone(ZoneId.of("Asia/Kolkata"))
                               .toLocalDateTime()
-                            : LocalDateTime.now();
+                            : LocalDateTime.now(ZoneId.of("Asia/Kolkata"));
                 } catch (Exception e) {
-                    tickTime = LocalDateTime.now();
+                    tickTime = LocalDateTime.now(ZoneId.of("Asia/Kolkata"));
                 }
 
                 MarketTick tick = MarketTick.builder()

@@ -173,7 +173,7 @@ public class KiteInstrumentService {
     // ---- Private helpers ----
 
     private synchronized void ensureCacheLoaded() {
-        if (!instrumentCache.isEmpty() && LocalDate.now().equals(lastFetchDate)) {
+        if (!instrumentCache.isEmpty() && LocalDate.now(ZoneId.of("Asia/Kolkata")).equals(lastFetchDate)) {
             return;
         }
         if (!kite.isConnected()) {
@@ -195,7 +195,7 @@ public class KiteInstrumentService {
 
             instrumentCache.clear();
             instrumentCache.addAll(mapped);
-            lastFetchDate = LocalDate.now();
+            lastFetchDate = LocalDate.now(ZoneId.of("Asia/Kolkata"));
             log.info("Loaded {} NFO instruments from Kite SDK", instrumentCache.size());
         } catch (Exception e) {
             // KiteException extends IOException → also caught here
@@ -208,7 +208,7 @@ public class KiteInstrumentService {
     private KiteInstrument toKiteInstrument(Instrument i) {
         LocalDate expiry = null;
         if (i.expiry != null) {
-            expiry = i.expiry.toInstant().atZone(ZoneId.systemDefault()).toLocalDate();
+            expiry = i.expiry.toInstant().atZone(ZoneId.of("Asia/Kolkata")).toLocalDate();
         }
         return KiteInstrument.builder()
                 .instrumentToken(i.instrument_token)

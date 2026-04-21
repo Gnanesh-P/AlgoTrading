@@ -48,6 +48,7 @@ public class AlgoStatusResponse {
     private List<HistoryRow> history;
     private String  lockedCeInstrument;
     private String  lockedPeInstrument;
+    private String  lockedExpiryLabel;   // "Current Week (29 Apr)" | "Next Week (06 May)"
 
     @Data
     @Builder

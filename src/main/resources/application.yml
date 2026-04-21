@@ -33,6 +33,19 @@ app:
   trading:
     market-open: "09:15"
     market-close: "15:30"
+  scheduler:
+    # Set to true to auto-start the algo at 9:10 AM every trading day
+    enabled: ${SCHEDULER_ENABLED:false}
+    # Which platform user to auto-start the session for
+    username: ${SCHEDULER_USERNAME:gowtham}
+    # Strategy parameters
+    lots: ${SCHEDULER_LOTS:1}
+    stop-loss: ${SCHEDULER_SL:5000}
+    target-profit: ${SCHEDULER_TARGET:10000}
+    max-reversals: ${SCHEDULER_MAX_REVERSALS:2}
+    trailing-profit: ${SCHEDULER_TRAILING:0}
+    square-off-eod: ${SCHEDULER_SQUARE_OFF_EOD:true}
+    paper-trade: ${SCHEDULER_PAPER_TRADE:false}
 
 kite:
   # Set KITE_API_KEY and KITE_API_SECRET in Render env vars

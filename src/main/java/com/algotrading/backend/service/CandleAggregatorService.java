@@ -8,6 +8,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.List;
@@ -35,7 +36,9 @@ public class CandleAggregatorService {
      */
     public Candle processTick(MarketTick tick) {
         String instrument = tick.getInstrument();
-        LocalDateTime tickTime = tick.getTimestamp() != null ? tick.getTimestamp() : LocalDateTime.now();
+        LocalDateTime tickTime = tick.getTimestamp() != null
+                ? tick.getTimestamp()
+                : LocalDateTime.now(ZoneId.of("Asia/Kolkata"));
         LocalDateTime candleMinute = tickTime.truncatedTo(ChronoUnit.MINUTES);
 
         Candle forming = formingCandles.get(instrument);

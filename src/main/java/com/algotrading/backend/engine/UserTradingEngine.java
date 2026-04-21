@@ -333,7 +333,7 @@ public class UserTradingEngine {
 
         session = TradeSession.builder()
                 .sessionId(UUID.randomUUID().toString())
-                .tradeDate(LocalDate.now())
+                .tradeDate(LocalDate.now(ZoneId.of("Asia/Kolkata")))
                 .config(config)
                 .state(StrategyState.WAITING_FOR_CANDLES)
                 .reversalCount(0)
@@ -341,13 +341,20 @@ public class UserTradingEngine {
                 .cumulativePnL(0.0)
                 .openPnL(0.0)
                 .startedBy(startedBy)
-                .startTime(LocalDateTime.now())
+                .startTime(LocalDateTime.now(ZoneId.of("Asia/Kolkata")))
                 .tradeLegs(new ArrayList<>())
                 .build();
 
         if (instruments != null) {
             tokenToSymbol.putAll(instruments);
             subscribedTokens.addAll(instruments.keySet());
+        }
+
+        // For MANUAL mode: instruments are known upfront — lock them immediately
+        // so the UI can show CE/PE strike from the moment the strategy starts.
+        // For AUTO_ATM: instruments depend on first-candle close price — resolved in handleWaitingForCandles().
+        if (config.getStrikeMode() == StrikeMode.MANUAL) {
+            optionInstrumentService.resolveAndLockInstruments(config, session, 0);
         }
 
         sessionPersistence.saveForUser(username, session);
@@ -507,6 +514,16 @@ public class UserTradingEngine {
                 candle.setCandleIndex(1);
                 session.setFirstCandle(candle);
                 log.info("[{}] 1st candle: time={}, close={}", username, candleTime, candle.getClose());
+
+                // AUTO_ATM: resolve strikes from first-candle close NOW and subscribe
+                // immediately so ticks arrive during the second candle (1 min before entry).
+                if (session.getConfig().getStrikeMode() == StrikeMode.AUTO_ATM) {
+                    optionInstrumentService.resolveAndLockInstruments(
+                            session.getConfig(), session, candle.getClose());
+                    subscribeAndSeedAutoAtmOptions();
+                    sessionPersistence.saveForUser(username, session);
+                    broadcastUpdate();  // push locked strikes to UI immediately
+                }
             }
         } else if (session.getSecondCandle() == null) {
             candle.setCandleIndex(2);
@@ -518,17 +535,13 @@ public class UserTradingEngine {
     }
 
     private void enterInitialPosition() {
-        TradingConfig cfg = session.getConfig();
         double close1 = session.getFirstCandle().getClose();
         double close2 = session.getSecondCandle().getClose();
-        double niftyPrice = close2 > 0 ? close2 : getLtp(cfg.getFuturesInstrument());
-        if (niftyPrice <= 0) niftyPrice = close1;
 
-        optionInstrumentService.resolveAndLockInstruments(cfg, session, niftyPrice);
-
-        if (cfg.getStrikeMode() == StrikeMode.AUTO_ATM) {
-            subscribeAndSeedAutoAtmOptions();
-        }
+        // Instruments already resolved:
+        //   MANUAL  → locked at startSession()
+        //   AUTO_ATM → locked at first candle close in handleWaitingForCandles()
+        // No need to call resolveAndLockInstruments here.
 
         OptionType direction = close1 > close2 ? OptionType.PE : OptionType.CE;
         log.info("[{}] Entry direction: {} (1st={}, 2nd={})", username, direction, close1, close2);
@@ -985,6 +998,7 @@ public class UserTradingEngine {
                 .history(history)
                 .lockedCeInstrument(session.getLockedCeInstrument())
                 .lockedPeInstrument(session.getLockedPeInstrument())
+                .lockedExpiryLabel(session.getLockedExpiryLabel())
                 .build();
     }
 

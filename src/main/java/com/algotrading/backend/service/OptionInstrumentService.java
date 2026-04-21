@@ -15,6 +15,7 @@ import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
+import java.util.Locale;
 
 @Service
 @Slf4j
@@ -51,10 +52,18 @@ public class OptionInstrumentService {
         LocalDate.of(2027, 10, 2)
     );
 
+    /**
+     * First OTM CE strike: always strictly ABOVE niftyPrice.
+     * e.g. 24330 → 24350, 24300 → 24350 (not ATM)
+     */
     public int computeCeStrike(double niftyPrice) {
-        return (int) (Math.ceil(niftyPrice / NIFTY_STRIKE_GAP) * NIFTY_STRIKE_GAP);
+        return (int) (Math.floor(niftyPrice / NIFTY_STRIKE_GAP) * NIFTY_STRIKE_GAP) + NIFTY_STRIKE_GAP;
     }
 
+    /**
+     * First OTM PE strike: always strictly at or below niftyPrice (ATM-aligned floor).
+     * e.g. 24330 → 24300, 24300 → 24300
+     */
     public int computePeStrike(double niftyPrice) {
         return (int) (Math.floor(niftyPrice / NIFTY_STRIKE_GAP) * NIFTY_STRIKE_GAP);
     }
@@ -72,7 +81,14 @@ public class OptionInstrumentService {
     public void resolveAndLockInstruments(TradingConfig config, TradeSession session,
                                           double currentNiftyPrice) {
         if (config.getStrikeMode() == StrikeMode.AUTO_ATM) {
+            LocalDate today      = LocalDate.now(ZoneId.of("Asia/Kolkata"));
+            LocalDate thisExpiry = findWeeklyExpiry(today);
             LocalDate autoExpiry = getAutoExpiryDate();
+
+            boolean isNextWeek = autoExpiry.isAfter(thisExpiry);
+            String expiryLabel = (isNextWeek ? "Next Week" : "Current Week")
+                    + " (" + autoExpiry.format(DateTimeFormatter.ofPattern("dd MMM", Locale.ENGLISH)) + ")";
+
             String dateKey = autoExpiry.format(DateTimeFormatter.ofPattern("yyddMMM")).toUpperCase();
 
             int ceStrike = computeCeStrike(currentNiftyPrice);
@@ -82,15 +98,26 @@ public class OptionInstrumentService {
             session.setLockedPeStrike(peStrike);
             session.setLockedCeInstrument("NIFTY" + dateKey + ceStrike + "CE");
             session.setLockedPeInstrument("NIFTY" + dateKey + peStrike + "PE");
-            log.info("AUTO_ATM: NIFTY={} → CE strike={} ({}) | PE strike={} ({})",
-                    currentNiftyPrice, ceStrike, session.getLockedCeInstrument(),
-                    peStrike, session.getLockedPeInstrument());
+            session.setLockedExpiryLabel(expiryLabel);
+            log.info("AUTO_ATM: NIFTY={} → CE={} PE={} expiry={} ({})",
+                    currentNiftyPrice, session.getLockedCeInstrument(),
+                    session.getLockedPeInstrument(), autoExpiry, expiryLabel);
         } else {
             session.setLockedCeStrike(config.getCeStrikePrice());
             session.setLockedPeStrike(config.getPeStrikePrice());
             session.setLockedCeInstrument(config.getCeInstrument());
             session.setLockedPeInstrument(config.getPeInstrument());
-            log.info("MANUAL: CE={} PE={}", session.getLockedCeInstrument(), session.getLockedPeInstrument());
+
+            // Expiry label from config's expiryType
+            LocalDate today  = LocalDate.now(ZoneId.of("Asia/Kolkata"));
+            LocalDate expiry = getExpiryDate(config.getExpiryType());
+            LocalDate thisExpiry = findWeeklyExpiry(today);
+            boolean isNextWeek = expiry.isAfter(thisExpiry);
+            String expiryLabel = (isNextWeek ? "Next Week" : "Current Week")
+                    + " (" + expiry.format(DateTimeFormatter.ofPattern("dd MMM", Locale.ENGLISH)) + ")";
+            session.setLockedExpiryLabel(expiryLabel);
+            log.info("MANUAL: CE={} PE={} expiry={}", session.getLockedCeInstrument(),
+                    session.getLockedPeInstrument(), expiryLabel);
         }
     }
 
@@ -119,7 +146,7 @@ public class OptionInstrumentService {
                 .build();
     }
 
-    private LocalDate getAutoExpiryDate() {
+    public LocalDate getAutoExpiryDate() {
         LocalDate today = LocalDate.now(ZoneId.of("Asia/Kolkata"));
         LocalDate expiry = findWeeklyExpiry(today);
 
@@ -152,18 +179,20 @@ public class OptionInstrumentService {
         return expiry;
     }
 
+    /**
+     * NIFTY weekly options expire every TUESDAY (NSE rule).
+     * If that Tuesday is an NSE holiday the expiry moves to the preceding trading day.
+     */
     private LocalDate findWeeklyExpiry(LocalDate from) {
         LocalDate d = from;
         while (d.getDayOfWeek() != DayOfWeek.TUESDAY) {
             d = d.plusDays(1);
         }
-        if (NSE_HOLIDAYS.contains(d)) {
+        // If Tuesday is a holiday, step back until we hit a trading day
+        while (NSE_HOLIDAYS.contains(d)
+                || d.getDayOfWeek() == DayOfWeek.SATURDAY
+                || d.getDayOfWeek() == DayOfWeek.SUNDAY) {
             d = d.minusDays(1);
-            while (d.getDayOfWeek() == DayOfWeek.SATURDAY
-                    || d.getDayOfWeek() == DayOfWeek.SUNDAY
-                    || NSE_HOLIDAYS.contains(d)) {
-                d = d.minusDays(1);
-            }
         }
         return d;
     }
