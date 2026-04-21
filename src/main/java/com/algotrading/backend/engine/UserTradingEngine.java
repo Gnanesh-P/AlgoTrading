@@ -208,6 +208,7 @@ public class UserTradingEngine {
     }
 
     double getLtp(String instrument) {
+        // 1. Per-engine tick cache (populated by per-user KiteTicker for LIVE, or routed ticks for PAPER)
         Double cached = priceCache.get(instrument);
         if (cached != null && cached > 0) return cached;
 
@@ -226,7 +227,10 @@ public class UserTradingEngine {
         }
 
         double globalLtp = globalCache.getLastPrice(instrument);
-        if (globalLtp > 0) return globalLtp;
+        if (globalLtp > 0) {
+            priceCache.put(instrument, globalLtp);
+            return globalLtp;
+        }
 
         return 0;
     }
@@ -651,8 +655,10 @@ public class UserTradingEngine {
 
         double ltp = getLtp(instrument);
         if (ltp <= 0) {
-            log.error("[{}] No LTP for {} (LTP=0). Aborting entry [{}].", username, instrument, reason);
-            internalStopSession("No LTP data for " + instrument + " — position entry aborted");
+            log.error("[{}] No tick data for {} — ticks have not arrived yet for this instrument. Aborting entry [{}].",
+                    username, instrument, reason);
+            internalStopSession("No tick data for " + instrument
+                    + " — ensure Kite ticker is subscribed and connected");
             return;
         }
 

@@ -584,6 +584,9 @@ function renderSession(s) {
   document.getElementById('btn-start').disabled = !isStopped;
   document.getElementById('btn-stop').disabled  =  isStopped;
 
+  // Dim the config strip when strategy is stopped so UI clearly reflects the state
+  if (strip) strip.style.opacity = isStopped ? '0.55' : '1';
+
   const liveParamsSection = document.getElementById('live-params-section');
   if (liveParamsSection) {
     if (!isStopped) {
