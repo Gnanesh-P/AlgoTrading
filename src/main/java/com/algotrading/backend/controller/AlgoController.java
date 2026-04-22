@@ -6,6 +6,7 @@ import com.algotrading.backend.dto.AlgoUpdateParamsRequest;
 import com.algotrading.backend.engine.TradingEngineRegistry;
 import com.algotrading.backend.engine.UserTradingEngine;
 import com.algotrading.backend.model.*;
+import com.algotrading.backend.service.AlgoSchedulerService;
 import com.algotrading.backend.service.CandleAggregatorService;
 import com.algotrading.backend.service.KiteInstrumentService;
 import com.algotrading.backend.service.KiteTickerService;
@@ -33,6 +34,7 @@ public class AlgoController {
     private final KiteInstrumentService   kiteInstrumentService;
     private final KiteTickerService       tickerService;
     private final CandleAggregatorService candleAggregator;
+    private final AlgoSchedulerService    schedulerService;
 
     @PostMapping("/algo/start")
     public ResponseEntity<String> startAlgo(@RequestBody AlgoStartRequest req,
@@ -203,5 +205,37 @@ public class AlgoController {
     public ResponseEntity<String> adminStop(@PathVariable String username) {
         engineRegistry.forceStopEngine(username);
         return ResponseEntity.ok("Force-stopped session for: " + username);
+    }
+
+    /**
+     * Instantly triggers the same AUTO_ATM start logic as the morning 9:10 cron.
+     * Can be called at any time — useful for manual testing or late starts.
+     *
+     * Optional query param ?username=xxx overrides the configured scheduler username.
+     * Admin-only.
+     *
+     * GET /algo/scheduler/trigger
+     * GET /algo/scheduler/trigger?username=gowtham
+     */
+    @GetMapping("/algo/scheduler/trigger")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<Map<String, String>> triggerScheduler(
+            @RequestParam(required = false) String username) {
+
+        String targetUser = (username != null && !username.isBlank())
+                ? username : schedulerService.getSchedulerUsername();
+
+        log.info("Manual scheduler trigger for [{}]", targetUser);
+        String result = schedulerService.triggerAutoStart(targetUser);
+
+        Map<String, String> body = new LinkedHashMap<>();
+        body.put("result",   result);
+        body.put("username", targetUser);
+        body.put("futures",  schedulerService.resolveNiftyFuturesSymbol());
+
+        boolean isError = result.startsWith("ERROR");
+        return isError
+                ? ResponseEntity.badRequest().body(body)
+                : ResponseEntity.ok(body);
     }
 }
