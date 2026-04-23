@@ -211,11 +211,12 @@ async function loadFuturesDropdown() {
     const instruments = await get('/api/kite/instruments/futures');
     const sel = document.getElementById('cfg-futures');
     if (instruments && instruments.length > 0) {
-      sel.innerHTML = instruments.map(i =>
-        `<option value="${i.tradingsymbol}" data-token="${i.instrumentToken || 0}">
-          ${i.tradingsymbol} (exp: ${i.expiry || '—'})
-        </option>`
-      ).join('');
+      sel.innerHTML = instruments.map(i => {
+        const label = i.expiry ? `exp: ${i.expiry}` : 'spot';
+        return `<option value="${i.tradingsymbol}" data-token="${i.instrumentToken || 0}">
+          ${i.tradingsymbol} (${label})
+        </option>`;
+      }).join('');
 
       if (savedConfig && savedConfig.futureSymbol) {
         const match = sel.querySelector(`option[value="${savedConfig.futureSymbol}"]`);

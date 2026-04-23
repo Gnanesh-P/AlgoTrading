@@ -39,12 +39,22 @@ public class KiteInstrumentService {
      */
     public List<KiteInstrument> getNiftyFutures() {
         ensureCacheLoaded();
-        return instrumentCache.stream()
+        List<KiteInstrument> result = new ArrayList<>();
+        result.add(KiteInstrument.builder()
+                .instrumentToken(256265L)
+                .tradingsymbol("NIFTY 50")
+                .name("NIFTY 50")
+                .instrumentType("EQ")
+                .segment("INDICES")
+                .exchange("NSE")
+                .build());
+        instrumentCache.stream()
                 .filter(i -> "NIFTY".equals(i.getName()))
                 .filter(i -> "FUT".equals(i.getInstrumentType()))
                 .filter(i -> "NFO-FUT".equals(i.getSegment()))
                 .sorted(Comparator.comparing(KiteInstrument::getExpiry))
-                .collect(Collectors.toList());
+                .forEach(result::add);
+        return result;
     }
 
     /**
