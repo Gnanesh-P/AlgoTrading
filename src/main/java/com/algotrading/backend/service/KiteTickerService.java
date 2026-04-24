@@ -224,7 +224,7 @@ public class KiteTickerService {
 
     private void processTicks(ArrayList<Tick> ticks) {
         if (ticks == null) return;
-        log.error("Process the ticks : {}", ticks);
+//        log.error("Process the ticks : {}", ticks);
         for (Tick kiteTick : ticks) {
             try {
                 long token = kiteTick.getInstrumentToken();

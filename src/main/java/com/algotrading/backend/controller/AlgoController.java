@@ -23,6 +23,7 @@ import java.time.LocalTime;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 @RestController
 @RequiredArgsConstructor
@@ -150,7 +151,17 @@ public class AlgoController {
     public ResponseEntity<String> stopAlgo(Principal principal) {
         String username = principal != null ? principal.getName() : "unknown";
 
-        return engineRegistry.stopEngine(username)
+        Optional<TradeSession> result = engineRegistry.stopEngine(username);
+
+        // Unsubscribe global ticker once no active engines remain
+        boolean anyStillActive = engineRegistry.getAllEngines().values().stream()
+                .anyMatch(e -> e.isActive());
+        if (!anyStillActive) {
+            tickerService.unsubscribeAll();
+            log.info("[{}] All engines stopped — global KiteTicker unsubscribed", username);
+        }
+
+        return result
                 .map(s -> ResponseEntity.ok("Stopped: " + s.getSessionId()))
                 .orElse(ResponseEntity.badRequest().body("No active session found for user: " + username));
     }

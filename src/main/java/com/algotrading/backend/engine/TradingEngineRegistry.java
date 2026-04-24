@@ -49,10 +49,6 @@ public class TradingEngineRegistry {
                             user -> {
                                 UserTradingEngine engine = buildEngine(user);
                                 engine.restoreSession(session);
-
-                                if (session.getConfig().getTradeMode() == TradeMode.LIVE) {
-                                    engine.connectKiteTicker();
-                                }
                                 engines.put(username, engine);
                                 log.info("Recovery [{}]: engine restored", username);
                             },
@@ -79,10 +75,6 @@ public class TradingEngineRegistry {
         }
 
         UserTradingEngine engine = buildEngine(user);
-
-        if (config.getTradeMode() == TradeMode.LIVE) {
-            engine.connectKiteTicker();
-        }
 
         engine.subscribeInstruments(instruments);
         engine.startSession(config, instruments, startedBy);
@@ -135,11 +127,10 @@ public class TradingEngineRegistry {
                 sessionPersistence);
     }
 
-    public void routeTickToPaperEngines(MarketTick tick) {
+    public void routeTickToActiveEngines(MarketTick tick) {
         engines.values().forEach(engine -> {
             TradeSession s = engine.getSession();
             if (s == null || s.getConfig() == null) return;
-            if (s.getConfig().getTradeMode() != TradeMode.PAPER) return;
             if (s.getState() == StrategyState.STOPPED || s.getState() == StrategyState.IDLE) return;
             engine.processTick(tick);
         });

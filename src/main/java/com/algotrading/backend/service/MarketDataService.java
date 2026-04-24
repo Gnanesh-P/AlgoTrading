@@ -63,9 +63,8 @@ public class MarketDataService {
         //    not delayed until the next candle close (which could be up to 60 s later).
         strategyService.checkSLTargetOnTick(tick.getInstrument(), tick.getLastPrice());
 
-        // 3. Route to all active PAPER-mode engines in the multi-tenant registry
-        //    Each engine filters for its own instruments internally.
-        engineRegistry.routeTickToPaperEngines(tick);
+        // 3. Route to all active engines (both LIVE and PAPER use the global KiteTicker)
+        engineRegistry.routeTickToActiveEngines(tick);
 
         // 4. Legacy singleton strategy — candle aggregation + reversal logic
         TradingConfig config = cache.getConfig();

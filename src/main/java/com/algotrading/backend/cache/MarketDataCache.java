@@ -44,7 +44,7 @@ public class MarketDataCache {
                 history.remove(0);
             }
         }
-        log.debug("Tick updated: {} @ {}", tick.getInstrument(), tick.getLastPrice());
+//        log.debug("Tick updated: {} @ {}", tick.getInstrument(), tick.getLastPrice());
     }
 
     public MarketTick getLatestTick(String instrument) {
