@@ -1,0 +1,37 @@
+services:
+  algo-trading-backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: algo-trading-backend
+    ports:
+      - "8080:8080"
+    environment:
+      PORT: 8080
+
+      # JWT — override in production (must be >= 64 chars)
+#      JWT_SECRET: ${JWT_SECRET:-}
+#
+#      # App users
+#      APP_USERNAME: ${APP_USERNAME:-}
+#      APP_PASSWORD: ${APP_PASSWORD:-}
+#      APP_USER2: ${APP_USER2:-}
+#      APP_PASS2: ${APP_PASS2:-}
+#      APP_USER3: ${APP_USER3:-}
+#      APP_PASS3: ${APP_PASS3:-}
+#      APP_USER4: ${APP_USER4:-}
+#      APP_PASS4: ${APP_PASS4:-}
+
+    volumes:
+      - algo-data:/app/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z localhost 8080 || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+volumes:
+  algo-data:
+    driver: local
