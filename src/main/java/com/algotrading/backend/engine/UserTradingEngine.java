@@ -35,7 +35,7 @@ public class UserTradingEngine {
     private final PlatformUser platformUser;
     private final TelegramService telegramService;
 
-    private KiteConnect kiteConnect;
+    private final KiteConnect kiteConnect;
     private KiteTicker kiteTicker;
     private volatile boolean tickerConnected = false;
 
@@ -56,6 +56,7 @@ public class UserTradingEngine {
 
     public UserTradingEngine(TelegramService telegramService,
                              PlatformUser platformUser,
+                             KiteConnect kiteConnect,
                              MarketDataCache globalCache,
                              OptionInstrumentService optionInstrumentService,
                              KiteInstrumentService kiteInstrumentService,
@@ -65,19 +66,13 @@ public class UserTradingEngine {
         this.telegramService = telegramService;
         this.platformUser = platformUser;
         this.username = platformUser.getUsername();
+        this.kiteConnect = kiteConnect;
         this.globalCache = globalCache;
         this.optionInstrumentService = optionInstrumentService;
         this.kiteInstrumentService = kiteInstrumentService;
         this.kiteTickerService = kiteTickerService;
         this.messagingTemplate = messagingTemplate;
         this.sessionPersistence = sessionPersistence;
-
-        if (platformUser.getKiteApiKey() != null && !platformUser.getKiteApiKey().isBlank()) {
-            this.kiteConnect = new KiteConnect(platformUser.getKiteApiKey());
-            if (platformUser.getKiteAccessToken() != null) {
-                this.kiteConnect.setAccessToken(platformUser.getKiteAccessToken());
-            }
-        }
     }
 
     public void connectKiteTicker() {
@@ -213,7 +208,7 @@ public class UserTradingEngine {
         if (cached != null && cached > 0) return cached;
 
         if (session != null && session.getConfig().getTradeMode() == TradeMode.LIVE
-                && kiteConnect != null && platformUser.getKiteAccessToken() != null) {
+                && kiteConnect != null) {
             try {
                 Map<String, LTPQuote> map = kiteConnect.getLTP(new String[]{"NFO:" + instrument});
                 LTPQuote q = map != null ? map.get("NFO:" + instrument) : null;
@@ -241,7 +236,7 @@ public class UserTradingEngine {
             log.info("[{}][PAPER] BUY {} x{} @ {}", username, instrument, qty, ltp);
             return ltp;
         }
-        if (kiteConnect == null || platformUser.getKiteAccessToken() == null) {
+        if (kiteConnect == null) {
             throw new IllegalStateException("[" + username + "] KiteConnect not initialized for live trading");
         }
         try {
@@ -650,7 +645,7 @@ public class UserTradingEngine {
                     + " — ensure Kite ticker is subscribed and connected");
             return;
         }
-
+        log.info("Place Buy order");
         double entryPrice = placeBuyOrder(instrument, cfg.getTotalQuantity());
 
         TradeEntry leg = TradeEntry.builder()
@@ -1027,13 +1022,7 @@ public class UserTradingEngine {
     }
 
     public void updateKiteAccessToken(String newToken) {
-        if (kiteConnect == null && platformUser.getKiteApiKey() != null) {
-            kiteConnect = new KiteConnect(platformUser.getKiteApiKey());
-        }
-        if (kiteConnect != null) {
-            kiteConnect.setAccessToken(newToken);
-            log.info("[{}] KiteConnect access token updated", username);
-        }
+        // Global KiteConnect bean is updated by KiteAuthService — nothing to do here
     }
 
     public boolean isActive() {

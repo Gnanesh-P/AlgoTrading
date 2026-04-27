@@ -3,6 +3,7 @@ package com.algotrading.backend.engine;
 import com.algotrading.backend.cache.MarketDataCache;
 import com.algotrading.backend.model.*;
 import com.algotrading.backend.service.*;
+import com.zerodhatech.kiteconnect.KiteConnect;
 import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -29,6 +30,7 @@ public class TradingEngineRegistry {
     private final SessionPersistenceService sessionPersistence;
     private final UserRegistryService     userRegistry;
     private final TelegramService         telegramService;
+    private final KiteConnect kiteConnect;
 
     @PostConstruct
     public void recoverAllSessions() {
@@ -119,6 +121,7 @@ public class TradingEngineRegistry {
         return new UserTradingEngine(
                 telegramService,
                 user,
+                kiteConnect,
                 globalCache,
                 optionInstrumentService,
                 kiteInstrumentService,
