@@ -240,17 +240,20 @@ public class UserTradingEngine {
             throw new IllegalStateException("[" + username + "] KiteConnect not initialized for live trading");
         }
         try {
+            double ltp = getLtp(instrument);
+            double limitPrice = roundToTick(ltp * 1.02);  // 1% above LTP — fills immediately, satisfies Zerodha market protection
             OrderParams p = new OrderParams();
             p.tradingsymbol = instrument;
             p.exchange = Constants.EXCHANGE_NFO;
             p.transactionType = Constants.TRANSACTION_TYPE_BUY;
-            p.orderType = Constants.ORDER_TYPE_MARKET;
+            p.orderType = Constants.ORDER_TYPE_LIMIT;
+            p.price = limitPrice;
             p.quantity = qty;
             p.product = Constants.PRODUCT_MIS;
             p.validity = Constants.VALIDITY_DAY;
             OrderResponse order = kiteConnect.placeOrder(p, Constants.VARIETY_REGULAR);
-            log.info("[{}][LIVE] BUY {} x{} → orderId={}", username, instrument, qty, order.orderId);
-            return getLtp(instrument);
+            log.info("[{}][LIVE] BUY {} x{} @ limit={} (ltp={}) → orderId={}", username, instrument, qty, limitPrice, ltp, order.orderId);
+            return ltp;
         } catch (Exception | KiteException e) {
             throw new RuntimeException("[" + username + "] BUY order failed: " + e.getMessage(), e);
         }
@@ -262,21 +265,32 @@ public class UserTradingEngine {
             log.info("[{}][PAPER] SELL {} x{} @ {}", username, instrument, qty, ltp);
             return ltp;
         }
+        if (kiteConnect == null) {
+            throw new IllegalStateException("[" + username + "] KiteConnect not initialized for live trading");
+        }
         try {
+            double ltp = getLtp(instrument);
+            double limitPrice = roundToTick(ltp * 0.98);  // 1% below LTP — fills immediately, satisfies Zerodha market protection
             OrderParams p = new OrderParams();
             p.tradingsymbol = instrument;
             p.exchange = Constants.EXCHANGE_NFO;
             p.transactionType = Constants.TRANSACTION_TYPE_SELL;
-            p.orderType = Constants.ORDER_TYPE_MARKET;
+            p.orderType = Constants.ORDER_TYPE_LIMIT;
+            p.price = limitPrice;
             p.quantity = qty;
             p.product = Constants.PRODUCT_MIS;
             p.validity = Constants.VALIDITY_DAY;
             OrderResponse order = kiteConnect.placeOrder(p, Constants.VARIETY_REGULAR);
-            log.info("[{}][LIVE] SELL {} x{} → orderId={}", username, instrument, qty, order.orderId);
-            return getLtp(instrument);
+            log.info("[{}][LIVE] SELL {} x{} @ limit={} (ltp={}) → orderId={}", username, instrument, qty, limitPrice, ltp, order.orderId);
+            return ltp;
         } catch (Exception | KiteException e) {
             throw new RuntimeException("[" + username + "] SELL order failed: " + e.getMessage(), e);
         }
+    }
+
+    // Rounds price to nearest 0.05 (NFO options tick size)
+    private double roundToTick(double price) {
+        return Math.round(price / 0.05) * 0.05;
     }
 
     private boolean hasOpenPosition(String instrument) {
