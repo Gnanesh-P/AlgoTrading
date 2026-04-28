@@ -10,7 +10,7 @@ import org.springframework.scheduling.annotation.EnableScheduling;
 @Slf4j
 public class AlgoTradingApplication {
     public static void main(String[] args) {
-        log.info("Enable the logs data");
+        log.info("Enable the logs");
         SpringApplication.run(AlgoTradingApplication.class, args);
     }
 }
