@@ -253,7 +253,10 @@ public class UserTradingEngine {
             p.validity = Constants.VALIDITY_DAY;
             OrderResponse order = kiteConnect.placeOrder(p, Constants.VARIETY_REGULAR);
             log.info("[{}][LIVE] BUY {} x{} @ limit={} (ltp={}) → orderId={}", username, instrument, qty, limitPrice, ltp, order.orderId);
-            return ltp;
+            // Poll actual fill price so trade logs match what Zerodha executed
+            double fillPrice = pollActualFillPrice(order.orderId, instrument, ltp);
+            log.info("[{}][LIVE] BUY {} actual fill price: {} (cached ltp was: {})", username, instrument, fillPrice, ltp);
+            return fillPrice;
         } catch (Exception | KiteException e) {
             throw new RuntimeException("[" + username + "] BUY order failed: " + e.getMessage(), e);
         }
@@ -282,10 +285,65 @@ public class UserTradingEngine {
             p.validity = Constants.VALIDITY_DAY;
             OrderResponse order = kiteConnect.placeOrder(p, Constants.VARIETY_REGULAR);
             log.info("[{}][LIVE] SELL {} x{} @ limit={} (ltp={}) → orderId={}", username, instrument, qty, limitPrice, ltp, order.orderId);
-            return ltp;
+            // Poll actual fill price so trade logs and P&L match what Zerodha executed
+            double fillPrice = pollActualFillPrice(order.orderId, instrument, ltp);
+            log.info("[{}][LIVE] SELL {} actual fill price: {} (cached ltp was: {})", username, instrument, fillPrice, ltp);
+            return fillPrice;
         } catch (Exception | KiteException e) {
             throw new RuntimeException("[" + username + "] SELL order failed: " + e.getMessage(), e);
         }
+    }
+
+    /**
+     * Polls Zerodha order history until the order is COMPLETE and returns the actual average fill price.
+     * Falls back to a fresh REST LTP call if the order doesn't fill within the timeout.
+     * This ensures entryPrice/exitPrice in trade logs always matches what Zerodha actually executed,
+     * not the potentially stale priceCache value at the moment the order was placed.
+     */
+    private double pollActualFillPrice(String orderId, String instrument, double fallback) {
+        long deadline = System.currentTimeMillis() + 5000;
+        while (System.currentTimeMillis() < deadline) {
+            try {
+                List<Order> history = kiteConnect.getOrderHistory(orderId);
+                if (history != null && !history.isEmpty()) {
+                    Order latest = history.get(history.size() - 1);
+                    if ("COMPLETE".equalsIgnoreCase(latest.status)
+                            && latest.averagePrice != null && !latest.averagePrice.isEmpty()) {
+                        double avgPrice = Double.parseDouble(latest.averagePrice);
+                        if (avgPrice > 0) {
+                            log.info("[{}] Order {} filled @ avgPrice={}", username, orderId, avgPrice);
+                            priceCache.put(instrument, avgPrice);
+                            return avgPrice;
+                        }
+                    }
+                    if ("REJECTED".equalsIgnoreCase(latest.status) || "CANCELLED".equalsIgnoreCase(latest.status)) {
+                        log.warn("[{}] Order {} status={} — using fallback price", username, orderId, latest.status);
+                        break;
+                    }
+                }
+                Thread.sleep(200);
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+                break;
+            } catch (Exception | KiteException e) {
+                log.warn("[{}] Order history poll failed for {}: {}", username, orderId, e.getMessage());
+                break;
+            }
+        }
+        // Fallback: fresh LTP from Kite REST (much more accurate than stale priceCache)
+        try {
+            Map<String, LTPQuote> map = kiteConnect.getLTP(new String[]{"NFO:" + instrument});
+            LTPQuote q = map != null ? map.get("NFO:" + instrument) : null;
+            if (q != null && q.lastPrice > 0) {
+                log.info("[{}] Using fresh LTP {} for {} as fill price (order poll timed out)", username, q.lastPrice, instrument);
+                priceCache.put(instrument, q.lastPrice);
+                return q.lastPrice;
+            }
+        } catch (Exception | KiteException e) {
+            log.warn("[{}] Fresh LTP fetch failed for {}: {}", username, instrument, e.getMessage());
+        }
+        log.warn("[{}] Could not determine fill price for {} — using stale ltp {}", username, instrument, fallback);
+        return fallback;
     }
 
     // Rounds price to nearest 0.05 (NFO options tick size)
