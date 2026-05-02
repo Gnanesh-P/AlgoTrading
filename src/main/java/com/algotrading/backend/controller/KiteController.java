@@ -57,10 +57,10 @@ public class KiteController {
         try {
             kiteAuthService.exchangeToken(requestToken);
             log.info("Kite callback successful");
-            return new RedirectView("/?kite=connected");
+            return new RedirectView("/algo?kite=connected");
         } catch (Exception e) {
             log.error("Kite callback error: {}", e.getMessage());
-            return new RedirectView("/?kite=error&message=" + e.getMessage());
+            return new RedirectView("/algo?kite=error&message=" + e.getMessage());
         }
     }
 

@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>Admin — NIFTY Algo</title>
+  <title>Admin — PilotX</title>
   <style>
     :root {
       --bg:      #0d1117; --surface: #161b22; --border: #30363d;
@@ -117,7 +117,7 @@
   <div class="login-box">
     <div class="login-logo">🔐</div>
     <h2>Admin Panel</h2>
-    <p style="color:var(--text2);font-size:13px;margin-bottom:20px;">NIFTY Algo — Subscriber Management</p>
+    <p style="color:var(--text2);font-size:13px;margin-bottom:20px;">PilotX — Subscriber Management</p>
     <div class="form-group" style="margin-bottom:12px;">
       <label>Username</label>
       <input type="text" id="a-username" placeholder="admin" value="admin"/>
@@ -137,8 +137,8 @@
   <div class="topbar">
     <div style="display:flex;align-items:center;gap:12px;">
       <span style="font-size:20px;">📈</span>
-      <h1>NIFTY Algo — Admin Panel</h1>
-      <span class="badge-admin">ADMIN</span>
+      <h1>PilotX — Admin Panel</h1>
+      <span class="badge-admin">GNANESH</span>
     </div>
     <div style="display:flex;gap:10px;align-items:center;">
       <span id="admin-user-label" style="color:var(--text2);font-size:13px;"></span>
@@ -230,7 +230,7 @@
       </div>
       <div class="form-group">
         <label>Role</label>
-        <select id="add-role"><option value="TRADER">TRADER</option><option value="ADMIN">ADMIN</option></select>
+        <select id="add-role"><option value="TRADER">TRADER</option><option value="GNANESH">GNANESH</option></select>
       </div>
       <div class="form-group">
         <label>Max Lots Allowed</label>
@@ -278,7 +278,7 @@
       </div>
       <div class="form-group">
         <label>Role</label>
-        <select id="edit-role"><option value="TRADER">TRADER</option><option value="ADMIN">ADMIN</option></select>
+        <select id="edit-role"><option value="TRADER">TRADER</option><option value="GNANESH">GNANESH</option></select>
       </div>
       <div class="form-group">
         <label>Max Lots Allowed</label>
@@ -466,8 +466,8 @@ function renderTable(users) {
     return;
   }
   document.getElementById('users-tbody').innerHTML = users.map(u => {
-    const roleTag   = u.role==='ADMIN'
-      ? '<span class="tag tag-admin">ADMIN</span>'
+    const roleTag   = u.role==='GNANESH'
+      ? '<span class="tag tag-admin">GNANESH</span>'
       : '<span class="tag tag-trader">TRADER</span>';
     const statusTag = !u.enabled
       ? '<span class="tag tag-disabled">Disabled</span>'

@@ -1,6 +1,7 @@
 /* ===== RESET & BASE ===== */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
+/* ===== DARK THEME (default) ===== */
 :root {
   --bg: #0d1117;
   --bg2: #161b22;
@@ -19,9 +20,33 @@
   --gold: #f0883e;
   --radius: 8px;
   --shadow: 0 4px 16px rgba(0,0,0,0.4);
+  --signal-bg: #161b22;
+  --signal-border: #30363d;
 }
 
-body { background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; font-size: 14px; min-height: 100vh; }
+/* ===== LIGHT THEME ===== */
+body.light-theme {
+  --bg: #f0f2f5;
+  --bg2: #ffffff;
+  --bg3: #f5f7fa;
+  --border: #d0d7de;
+  --text: #1c2128;
+  --text2: #57606a;
+  --accent: #1a7f37;
+  --accent-hover: #218a40;
+  --danger: #cf222e;
+  --warning: #9a6700;
+  --info: #0969da;
+  --success: #1a7f37;
+  --ce: #0969da;
+  --pe: #cf222e;
+  --gold: #bc4c00;
+  --shadow: 0 4px 16px rgba(0,0,0,0.12);
+  --signal-bg: #f0f7ff;
+  --signal-border: #b6d4f8;
+}
+
+body { background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; font-size: 14px; min-height: 100vh; transition: background 0.2s, color 0.2s; }
 
 .hidden { display: none !important; }
 .screen { min-height: 100vh; }
@@ -30,6 +55,16 @@ body { background: var(--bg); color: var(--text); font-family: -apple-system, Bl
 #login-screen {
   display: flex; align-items: center; justify-content: center; min-height: 100vh;
   background: radial-gradient(ellipse at center, #1a2332 0%, #0d1117 70%);
+}
+body.light-theme #login-screen {
+  background: radial-gradient(ellipse at center, #dbeafe 0%, #f0f2f5 70%);
+}
+/* login.html uses body directly as the login screen background */
+body:has(#login-screen) {
+  background: radial-gradient(ellipse at center, #1a2332 0%, #0d1117 70%);
+}
+body.light-theme:has(#login-screen) {
+  background: radial-gradient(ellipse at center, #dbeafe 0%, #f0f2f5 70%);
 }
 .login-box {
   background: var(--bg2); border: 1px solid var(--border); border-radius: 12px;
@@ -157,6 +192,84 @@ select option { background: var(--bg3); }
 .status-label { font-size: 12px; color: var(--text2); }
 .status-value { font-size: 13px; font-weight: 600; }
 .monospace { font-family: monospace; font-size: 12px; }
+
+/* ===== SIGNAL MONITOR (normal-user replacement for status rows) ===== */
+.signal-monitor { padding-top: 6px; }
+.signal-card-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 6px; }
+
+.signal-dir-card {
+  background: var(--signal-bg);
+  border: 1px solid var(--signal-border);
+  border-radius: var(--radius);
+  padding: 16px 10px;
+  text-align: center;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+}
+.signal-dir-icon {
+  font-size: 36px;
+  font-weight: 900;
+  line-height: 1;
+  margin-bottom: 6px;
+  font-family: monospace;
+}
+.signal-dir-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text2);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.signal-info-card {
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  display: flex; flex-direction: column; gap: 6px;
+}
+.signal-info-row {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 3px 0;
+  border-bottom: 1px solid var(--border);
+}
+.signal-info-row:last-child { border-bottom: none; }
+.signal-info-label { font-size: 11px; color: var(--text2); }
+.signal-info-value { font-size: 12px; font-weight: 600; color: var(--text); }
+
+/* ===== ABSTRACT SESSION CARD (normal-user replacement for trade legs table) ===== */
+.usc-card {
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 18px 16px;
+  text-align: center;
+}
+.usc-header {
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+  margin-bottom: 8px;
+}
+.usc-dot {
+  width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0;
+}
+.usc-dot-active  { background: #3fb950; box-shadow: 0 0 6px #3fb950; animation: pulse 1.8s ease-in-out infinite; }
+.usc-dot-stopped { background: #f85149; }
+.usc-dot-idle    { background: var(--text2); }
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.4; }
+}
+.usc-status {
+  font-size: 13px; font-weight: 600; color: var(--text);
+}
+.usc-date {
+  font-size: 12px; color: var(--text2); margin-bottom: 10px;
+}
+.usc-note {
+  font-size: 11px; color: var(--text2);
+  border-top: 1px solid var(--border);
+  padding-top: 10px; margin-top: 4px;
+  font-style: italic;
+}
 
 /* ===== CANDLE SECTION ===== */
 .candle-section { margin-bottom: 14px; }

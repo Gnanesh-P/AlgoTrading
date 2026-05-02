@@ -3,7 +3,7 @@
     "id": "7121cfdb-d41b-45a4-bfc0-bd290cbefd14",
     "username": "admin",
     "passwordHash": "$2a$10$zgUP/rkRUKbiAK7xHYkZZ.hwfz0AdxZ5X7b4BeLw/NWKxR6/z23gG",
-    "role": "ADMIN",
+    "role": "GNANESH",
     "enabled": true,
     "maxLotSize": 50,
     "planExpiryDate": [
@@ -39,7 +39,7 @@
     "id": "7121cfdb-d41b-45a4-bfc0-bd290cbefd15",
     "username": "gowtham",
     "passwordHash": "$2a$10$zgUP/rkRUKbiAK7xHYkZZ.hwfz0AdxZ5X7b4BeLw/NWKxR6/z23gG",
-    "role": "ADMIN",
+    "role": "GNANESH",
     "enabled": true,
     "maxLotSize": 50,
     "planExpiryDate": [

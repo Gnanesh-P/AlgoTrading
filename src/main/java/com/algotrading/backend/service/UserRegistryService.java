@@ -220,7 +220,7 @@ public class UserRegistryService {
 
         boolean firstEntry = true;
         for (AppCredentialsProperties.UserEntry entry : entries) {
-            String role = firstEntry ? "ADMIN" : "TRADER";
+            String role = firstEntry ? "GNANESH" : "TRADER";
             firstEntry = false;
             PlatformUser user = PlatformUser.builder()
                     .id(UUID.randomUUID().toString())
@@ -228,9 +228,9 @@ public class UserRegistryService {
                     .passwordHash(passwordEncoder.encode(entry.getPassword()))
                     .role(role)
                     .enabled(true)
-                    .maxLotSize(role.equals("ADMIN") ? 50 : 1)
+                    .maxLotSize(entry.getMaxLotSize() > 0 ? entry.getMaxLotSize() : (role.equals("GNANESH") ? 50 : 1))
                     .planExpiryDate(LocalDate.of(2099, 12, 31))
-                    .notes(role.equals("ADMIN") ? "Admin account (seeded from yml)" : "Seeded from yml")
+                    .notes(role.equals("GNANESH") ? "Admin account (seeded from yml)" : "Seeded from yml")
                     .createdAt(LocalDateTime.now())
                     .updatedAt(LocalDateTime.now())
                     .build();
@@ -239,12 +239,12 @@ public class UserRegistryService {
         }
 
         // Always ensure at least one admin exists
-        if (users.stream().noneMatch(u -> "ADMIN".equals(u.getRole()))) {
+        if (users.stream().noneMatch(u -> "GNANESH".equals(u.getRole()))) {
             PlatformUser admin = PlatformUser.builder()
                     .id(UUID.randomUUID().toString())
                     .username("admin")
                     .passwordHash(passwordEncoder.encode("admin123"))
-                    .role("ADMIN")
+                    .role("GNANESH")
                     .enabled(true)
                     .maxLotSize(50)
                     .planExpiryDate(LocalDate.of(2099, 12, 31))

@@ -49,10 +49,14 @@ public class SecurityConfig {
                 // Public: auth, WebSocket, Kite OAuth callback, static assets
                 .requestMatchers(
                     "/api/auth/**",
+                    "/api/quotes",
                     "/ws/**",
                     "/api/kite/callback",
                     "/",
                     "/index.html",
+                    "/algo",
+                    "/login",
+                    "/login.html",
                     "/admin.html",        // Admin UI page (page itself checks JWT via JS)
                     "/css/**",
                     "/js/**",
@@ -60,7 +64,7 @@ public class SecurityConfig {
                 ).permitAll()
                 // Admin API: role enforced by @PreAuthorize in AdminController
                 // (also enforced here as defence-in-depth)
-                .requestMatchers("/api/admin/**").hasRole("ADMIN")
+                .requestMatchers("/api/admin/**").hasRole("GNANESH")
                 // Everything else requires any valid JWT
                 .anyRequest().authenticated()
             )

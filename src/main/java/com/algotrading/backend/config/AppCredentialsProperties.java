@@ -31,6 +31,7 @@ public class AppCredentialsProperties {
     public static class UserEntry {
         private String username = "";
         private String password = "";
+        private int maxLotSize = 1;
 
         public boolean isValid() {
             return username != null && !username.isBlank()

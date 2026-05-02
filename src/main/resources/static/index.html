@@ -8,37 +8,20 @@
 </head>
 <body>
 
-<!-- LOGIN SCREEN -->
-<div id="login-screen" class="screen">
-  <div class="login-box">
-    <div class="logo">📈 NIFTY Algo</div>
-    <h2>Sign In</h2>
-    <div class="form-group">
-      <label>Username</label>
-      <input type="text" id="username" value="" placeholder="admin"/>
-    </div>
-    <div class="form-group">
-      <label>Password</label>
-      <input type="password" id="password" value="" placeholder="Password"/>
-    </div>
-    <button class="btn btn-primary btn-full" onclick="login()">Login</button>
-    <div id="login-error" class="error-msg hidden"></div>
-  </div>
-</div>
-
 <!-- MAIN DASHBOARD -->
-<div id="dashboard" class="screen hidden">
+<div id="dashboard" class="screen">
 
   <!-- TOP NAV -->
   <nav class="topnav">
     <div class="nav-left">
-      <span class="logo-sm">📈 NIFTY Algo</span>
+      <span class="logo-sm">📈 PilotX</span>
       <span id="nav-nifty-price" class="price-badge">NIFTY —</span>
     </div>
     <div class="nav-right">
       <span id="kite-status-badge" class="badge badge-disconnected">Kite: Not Connected</span>
       <button id="btn-kite-disconnect" class="btn btn-sm btn-outline" onclick="disconnectKite()" style="display:none;">🔌 Disconnect Kite</button>
       <span id="strategy-badge" class="badge badge-idle">Strategy: IDLE</span>
+      <button id="btn-theme" class="btn btn-sm btn-outline" onclick="toggleTheme()" title="Toggle light/dark theme">☀️</button>
       <button class="btn btn-sm btn-danger" onclick="logout()">Logout</button>
     </div>
   </nav>
@@ -134,13 +117,20 @@
         </div>
       </div>
 
-      <div class="form-row">
+      <!-- Max Reversals — admin only -->
+      <div class="form-row admin-only">
         <div class="form-group">
           <label>Max Reversals</label>
           <input type="number" id="cfg-max-reversals" value="3" min="0"/>
         </div>
         <div class="form-group" style="display:flex;align-items:center;padding-top:20px;">
           <span id="qty-display" style="font-size:13px;color:#94a3b8;">Total qty: <strong id="qty-total">65</strong> units</span>
+        </div>
+      </div>
+      <!-- Qty display for normal users -->
+      <div class="form-row user-only">
+        <div class="form-group" style="display:flex;align-items:center;padding-top:4px;">
+          <span id="qty-display-user" style="font-size:13px;color:#94a3b8;">Total qty: <strong id="qty-total-user">65</strong> units</span>
         </div>
       </div>
 
@@ -255,30 +245,61 @@
           <span class="status-label">State</span>
           <span id="s-state" class="status-value badge badge-idle">IDLE</span>
         </div>
-        <div class="status-row">
+        <!-- Admin-only rows -->
+        <div class="status-row admin-only">
           <span class="status-label">Started By</span>
           <span id="s-started-by" class="status-value" style="font-weight:600;">—</span>
         </div>
-        <div class="status-row">
+        <div class="status-row admin-only">
           <span class="status-label">Reversals</span>
           <span id="s-reversals" class="status-value">0 / 0</span>
         </div>
-        <div class="status-row">
+        <div class="status-row admin-only">
           <span class="status-label">Entry Direction</span>
           <span id="s-direction" class="status-value">—</span>
         </div>
-        <div class="status-row">
+        <div class="status-row admin-only">
           <span class="status-label">Locked CE</span>
           <span id="s-locked-ce" class="status-value monospace">—</span>
         </div>
-        <div class="status-row">
+        <div class="status-row admin-only">
           <span class="status-label">Locked PE</span>
           <span id="s-locked-pe" class="status-value monospace">—</span>
         </div>
+
+        <!-- Normal-user replacement: Signal Monitor -->
+        <div class="user-only">
+          <div class="signal-monitor">
+            <div class="signal-card-row">
+              <div class="signal-dir-card" id="user-direction-card">
+                <div class="signal-dir-icon" id="user-dir-icon">—</div>
+                <div class="signal-dir-label" id="user-dir-label">No Position</div>
+              </div>
+              <div class="signal-info-card">
+                <div class="signal-info-row">
+                  <span class="signal-info-label">Mode</span>
+                  <span id="user-trade-mode-info" class="signal-info-value">—</span>
+                </div>
+                <div class="signal-info-row">
+                  <span class="signal-info-label">Lots</span>
+                  <span id="user-lots-info" class="signal-info-value">—</span>
+                </div>
+                <div class="signal-info-row">
+                  <span class="signal-info-label">Target</span>
+                  <span id="user-target-info" class="signal-info-value">—</span>
+                </div>
+                <div class="signal-info-row">
+                  <span class="signal-info-label">Stop Loss</span>
+                  <span id="user-sl-info" class="signal-info-value">—</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
 
-      <!-- CANDLE INFO -->
-      <div class="candle-section">
+      <!-- CANDLE INFO — admin only -->
+      <div class="candle-section admin-only">
         <h4>Candle Closes</h4>
         <div class="candle-row">
           <div class="candle-box" id="candle1">
@@ -361,25 +382,40 @@
         </span>
       </div>
 
-      <h4 style="margin-top:20px;margin-bottom:8px;">Trade Legs</h4>
-      <div class="table-wrap">
-        <table class="trade-table" id="legs-table">
-          <thead>
-            <tr>
-              <th>#</th>
-              <th>Type</th>
-              <th>Entry Price</th>
-              <th>Entry Time</th>
-              <th>Exit Price</th>
-              <th>Exit Time</th>
-              <th>P&L (₹)</th>
-              <th>Reason / Status</th>
-            </tr>
-          </thead>
-          <tbody id="legs-body">
-            <tr><td colspan="8" class="empty-row">No trades yet</td></tr>
-          </tbody>
-        </table>
+      <!-- Trade Legs — admin only -->
+      <div class="admin-only">
+        <h4 style="margin-top:20px;margin-bottom:8px;">Trade Legs</h4>
+        <div class="table-wrap">
+          <table class="trade-table" id="legs-table">
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Type</th>
+                <th>Entry Price</th>
+                <th>Entry Time</th>
+                <th>Exit Price</th>
+                <th>Exit Time</th>
+                <th>P&L (₹)</th>
+                <th>Reason / Status</th>
+              </tr>
+            </thead>
+            <tbody id="legs-body">
+              <tr><td colspan="8" class="empty-row">No trades yet</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Abstract session card for normal users -->
+      <div class="user-only" id="user-session-card" style="margin-top:20px;">
+        <div class="usc-card">
+          <div class="usc-header">
+            <span class="usc-dot" id="usc-dot"></span>
+            <span class="usc-status" id="usc-status-text">Initialising…</span>
+          </div>
+          <div class="usc-date" id="usc-date">—</div>
+          <div class="usc-note">Strategy execution is handled by the system</div>
+        </div>
       </div>
     </section>
 

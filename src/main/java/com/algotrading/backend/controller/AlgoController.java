@@ -134,7 +134,7 @@ public class AlgoController {
         PlatformUser user = platformUserOpt.orElseGet(() ->
                 PlatformUser.builder()
                         .username(startedBy)
-                        .role("ADMIN")
+                        .role("GNANESH")
                         .enabled(true)
                         .maxLotSize(100)
                         .build()
@@ -206,13 +206,13 @@ public class AlgoController {
     }
 
     @GetMapping("/algo/sessions")
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasRole('GNANESH')")
     public ResponseEntity<List<Map<String, Object>>> getAllSessions() {
         return ResponseEntity.ok(engineRegistry.getAllSessionSummaries());
     }
 
     @PostMapping("/algo/admin/stop/{username}")
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasRole('GNANESH')")
     public ResponseEntity<String> adminStop(@PathVariable String username) {
         engineRegistry.forceStopEngine(username);
         return ResponseEntity.ok("Force-stopped session for: " + username);
@@ -229,7 +229,7 @@ public class AlgoController {
      * GET /algo/scheduler/trigger?username=gowtham
      */
     @GetMapping("/algo/scheduler/trigger")
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasRole('GNANESH')")
     public ResponseEntity<Map<String, String>> triggerScheduler(
             @RequestParam(required = false) String username) {
 

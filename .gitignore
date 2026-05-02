@@ -49,3 +49,4 @@ spring.log
 *.zip
 *.tar.gz
 *.rar
+/.claude/settings.local.json

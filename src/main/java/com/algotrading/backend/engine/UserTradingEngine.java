@@ -692,10 +692,12 @@ public class UserTradingEngine {
 
             if (isPnLExitTriggered()) return;
 
-            String msg = String.format(
-                    "🔄 <b>Position Reversed</b>\nFrom: <code>%s</code>\nTo: <code>%s</code>\nClose: <code>%.2f</code>\nFirst Close: <code>%.2f</code>",
-                    openLeg.getOptionType(), newDir, currentClose, firstClose);
-            telegramService.sendStrategyMessage(msg);
+            if (isAdmin()) {
+                String msg = String.format(
+                        "🔄 <b>Position Reversed</b>\nFrom: <code>%s</code>\nTo: <code>%s</code>\nClose: <code>%.2f</code>\nFirst Close: <code>%.2f</code>",
+                        openLeg.getOptionType(), newDir, currentClose, firstClose);
+                telegramService.sendStrategyMessage(msg);
+            }
             enterPosition(newDir, "REVERSAL_" + session.getReversalCount());
         }
 
@@ -736,12 +738,14 @@ public class UserTradingEngine {
         session.getTradeLegs().add(leg);
 
         int effectiveStrike = strikePrice > 0 ? strikePrice : parseStrikeFromSymbol(instrument);
-        String msg = String.format(
-                "✅ <b>Position Entered</b>\nType: <code>%s</code>\nInstrument: <code>%s</code>\nStrike: <code>%s</code>\nPrice: <code>%.2f</code>\nQty: <code>%d</code>\nReason: <code>%s</code>",
-                optionType, instrument,
-                effectiveStrike > 0 ? String.valueOf(effectiveStrike) : "—",
-                entryPrice, leg.getQuantity(), reason);
-        telegramService.sendStrategyMessage(msg);
+        if (isAdmin()) {
+            String msg = String.format(
+                    "✅ <b>Position Entered</b>\nType: <code>%s</code>\nInstrument: <code>%s</code>\nStrike: <code>%s</code>\nPrice: <code>%.2f</code>\nQty: <code>%d</code>\nReason: <code>%s</code>",
+                    optionType, instrument,
+                    effectiveStrike > 0 ? String.valueOf(effectiveStrike) : "—",
+                    entryPrice, leg.getQuantity(), reason);
+            telegramService.sendStrategyMessage(msg);
+        }
 
         log.info("[{}] Entered leg={} type={} instrument={} entry={} reason={}",
                 username, leg.getLegNumber(), optionType, instrument, entryPrice, reason);
@@ -773,11 +777,13 @@ public class UserTradingEngine {
                 username, openLeg.getLegNumber(), openLeg.getOptionType(),
                 exitPrice, legPnl, session.getCumulativePnL(), reason);
 
-        String msg = String.format(
-                "🔚 <b>Position Exited</b>\nType: <code>%s</code>\nInstrument: <code>%s</code>\nEntry: <code>%.2f</code>\nExit: <code>%.2f</code>\nP/L: <code>%.2f</code>\nReason: <code>%s</code>",
-                openLeg.getOptionType(), openLeg.getInstrument(),
-                openLeg.getEntryPrice(), exitPrice, legPnl, reason);
-        telegramService.sendStrategyMessage(msg);
+        if (isAdmin()) {
+            String msg = String.format(
+                    "🔚 <b>Position Exited</b>\nType: <code>%s</code>\nInstrument: <code>%s</code>\nEntry: <code>%.2f</code>\nExit: <code>%.2f</code>\nP/L: <code>%.2f</code>\nReason: <code>%s</code>",
+                    openLeg.getOptionType(), openLeg.getInstrument(),
+                    openLeg.getEntryPrice(), exitPrice, legPnl, reason);
+            telegramService.sendStrategyMessage(msg);
+        }
     }
 
     private void updateOpenPnL() {
@@ -875,14 +881,30 @@ public class UserTradingEngine {
 
     private void sendTelegramSummary(String stopReason) {
         try {
+            String endT = session.getEndTime() != null
+                    ? session.getEndTime().format(IST_FMT) + " IST"
+                    : LocalDateTime.now(ZoneId.of("Asia/Kolkata")).format(IST_FMT) + " IST";
+            double totalPnl = session.getCumulativePnL();
+
+            if (!isAdmin()) {
+                String simple = String.format(
+                        "🔔 <b>Strategy Stopped</b>\n" +
+                        "User: <code>%s</code>\n" +
+                        "Stop Reason: <code>%s</code>\n" +
+                        "Time: <code>%s</code>\n\n" +
+                        "💰 <b>P&amp;L: %.0f</b>",
+                        username, stopReason, endT, totalPnl);
+                telegramService.sendStrategyMessage(simple);
+                return;
+            }
+
             TradingConfig cfg = session.getConfig();
 
             String firstCandleInfo = "—";
             if (session.getFirstCandle() != null) {
                 Candle c = session.getFirstCandle();
                 String t = c.getOpenTime() != null
-                        ? c.getOpenTime().toLocalTime().toString().substring(0, 5)
-                        : "—";
+                        ? c.getOpenTime().toLocalTime().toString().substring(0, 5) : "—";
                 firstCandleInfo = String.format("Time: %s IST | Close: %.2f", t, c.getClose());
             }
 
@@ -891,8 +913,7 @@ public class UserTradingEngine {
                     ? session.getLastClosedCandle() : session.getSecondCandle();
             if (lastC != null) {
                 String t = lastC.getOpenTime() != null
-                        ? lastC.getOpenTime().toLocalTime().toString().substring(0, 5)
-                        : "—";
+                        ? lastC.getOpenTime().toLocalTime().toString().substring(0, 5) : "—";
                 lastCandleInfo = String.format("Time: %s IST | Close: %.2f", t, lastC.getClose());
             }
 
@@ -910,13 +931,7 @@ public class UserTradingEngine {
                             session.getLockedPeInstrument() != null ? session.getLockedPeInstrument() : "—");
 
             String startT = session.getStartTime() != null
-                    ? session.getStartTime().format(IST_FMT) + " IST"
-                    : "—";
-            String endT = session.getEndTime() != null
-                    ? session.getEndTime().format(IST_FMT) + " IST"
-                    : LocalDateTime.now(ZoneId.of("Asia/Kolkata")).format(IST_FMT) + " IST";
-
-            double totalPnl = session.getCumulativePnL();
+                    ? session.getStartTime().format(IST_FMT) + " IST" : "—";
 
             String html = String.format(
                     "📊 <b>Strategy Summary</b>\n\n" +
@@ -935,25 +950,21 @@ public class UserTradingEngine {
                     "%s" +
                     "</pre>\n\n" +
                     "💰 <b>Total P&amp;L: %.0f</b>",
-                    username,
-                    strategyDirection,
-                    strikeInfo,
-                    cfg.getFuturesInstrument(),
-                    cfg.getExpiryType(),
-                    startT,
-                    endT,
-                    stopReason,
-                    firstCandleInfo,
-                    lastCandleInfo,
+                    username, strategyDirection, strikeInfo,
+                    cfg.getFuturesInstrument(), cfg.getExpiryType(),
+                    startT, endT, stopReason,
+                    firstCandleInfo, lastCandleInfo,
                     "#", "TYPE", "ENTRY", "ENTRY-T", "EXIT", "EXIT-T", "P&L", "REASON",
-                    buildTextTable(),
-                    totalPnl
-            );
+                    buildTextTable(), totalPnl);
 
             telegramService.sendStrategyMessage(html);
         } catch (Exception e) {
             log.warn("[{}] Failed to send Telegram summary: {}", username, e.getMessage());
         }
+    }
+
+    private boolean isAdmin() {
+        return platformUser != null && "GNANESH".equalsIgnoreCase(platformUser.getRole());
     }
 
     private int parseStrikeFromSymbol(String instrument) {

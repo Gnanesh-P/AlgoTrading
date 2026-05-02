@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>PilotX — Sign In</title>
+  <link rel="stylesheet" href="/css/style.css"/>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    html, body {
+      height: 100%;
+      background: #060b14;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    }
+
+    /* ── Full-screen background image ── */
+    .lgn-bg {
+      position: fixed; inset: 0; z-index: 0;
+      background-image: url('https://images.unsplash.com/photo-1611974789855-9c2a0a7236a3?auto=format&fit=crop&w=1920&q=80');
+      background-size: cover;
+      background-position: center 40%;
+      filter: brightness(0.38) saturate(1.3);
+    }
+    /* gradient vignette so edges are darker than center */
+    .lgn-overlay {
+      position: fixed; inset: 0; z-index: 1;
+      background:
+        radial-gradient(ellipse at 50% 50%, transparent 30%, rgba(6,11,20,0.75) 100%),
+        linear-gradient(180deg, rgba(6,11,20,0.55) 0%, rgba(6,11,20,0.3) 50%, rgba(6,11,20,0.75) 100%);
+    }
+
+    /* ── Page layout ── */
+    #login-screen {
+      position: relative; z-index: 10;
+      min-height: 100vh;
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      padding: 20px;
+    }
+
+    /* ── Glassmorphism card ── */
+    .login-box {
+      width: 100%; max-width: 400px;
+      background: rgba(10, 15, 28, 0.70);
+      backdrop-filter: blur(32px) saturate(1.4);
+      -webkit-backdrop-filter: blur(32px) saturate(1.4);
+      border: 1px solid rgba(255, 255, 255, 0.10);
+      border-radius: 22px;
+      padding: 44px 40px 36px;
+      box-shadow:
+        0 0 0 1px rgba(255,255,255,0.04),
+        0 12px 60px rgba(0,0,0,0.75),
+        inset 0 1px 0 rgba(255,255,255,0.07);
+      animation: lgn-rise 0.55s cubic-bezier(0.22, 1, 0.36, 1) both;
+    }
+    @keyframes lgn-rise {
+      from { opacity: 0; transform: translateY(28px) scale(0.98); }
+      to   { opacity: 1; transform: translateY(0) scale(1); }
+    }
+
+    /* Light mode card */
+    body.light-theme .login-box {
+      background: rgba(255,255,255,0.82);
+      border-color: rgba(0,0,0,0.08);
+      box-shadow: 0 12px 60px rgba(0,0,0,0.25);
+    }
+
+    /* ── Brand area ── */
+    .lgn-brand { text-align: center; margin-bottom: 28px; }
+    .lgn-brand-icon {
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 60px; height: 60px;
+      background: linear-gradient(135deg, #1a5ddb 0%, #2ea043 100%);
+      border-radius: 16px; font-size: 30px;
+      box-shadow: 0 4px 24px rgba(26,93,219,0.45);
+      margin-bottom: 14px;
+    }
+    .lgn-brand-name {
+      font-size: 24px; font-weight: 800; letter-spacing: -0.6px;
+      background: linear-gradient(90deg, #58a6ff 0%, #3fb950 100%);
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+      background-clip: text;
+      margin-bottom: 5px;
+    }
+    .lgn-brand-tag {
+      font-size: 10.5px; letter-spacing: 2.2px; text-transform: uppercase;
+      color: rgba(255,255,255,0.32);
+    }
+    body.light-theme .lgn-brand-tag { color: rgba(0,0,0,0.38); }
+
+    /* ── Divider ── */
+    .lgn-hr {
+      height: 1px; margin: 22px 0 26px;
+      background: linear-gradient(90deg, transparent, rgba(255,255,255,0.1), transparent);
+    }
+    body.light-theme .lgn-hr { background: linear-gradient(90deg, transparent, rgba(0,0,0,0.1), transparent); }
+
+    /* ── Form fields ── */
+    .lgn-field { margin-bottom: 16px; }
+    .lgn-field label {
+      display: block; margin-bottom: 7px;
+      font-size: 11px; font-weight: 600;
+      letter-spacing: 1px; text-transform: uppercase;
+      color: rgba(255,255,255,0.42);
+    }
+    body.light-theme .lgn-field label { color: rgba(0,0,0,0.45); }
+    .lgn-field input {
+      width: 100%; padding: 12px 15px;
+      background: rgba(255,255,255,0.05);
+      border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 11px;
+      color: #e6edf3; font-size: 14px; outline: none;
+      transition: border-color 0.2s, background 0.2s, box-shadow 0.2s;
+    }
+    body.light-theme .lgn-field input {
+      background: rgba(0,0,0,0.04);
+      border-color: rgba(0,0,0,0.13);
+      color: #1c2128;
+    }
+    .lgn-field input::placeholder { color: rgba(255,255,255,0.18); }
+    body.light-theme .lgn-field input::placeholder { color: rgba(0,0,0,0.22); }
+    .lgn-field input:focus {
+      border-color: rgba(88,166,255,0.6);
+      background: rgba(88,166,255,0.06);
+      box-shadow: 0 0 0 3px rgba(88,166,255,0.13);
+    }
+
+    /* ── Login button ── */
+    .lgn-btn {
+      width: 100%; padding: 13px 16px; margin-top: 6px;
+      background: linear-gradient(135deg, #1a5ddb 0%, #1f7fb8 100%);
+      border: none; border-radius: 11px;
+      color: #fff; font-size: 15px; font-weight: 600;
+      cursor: pointer;
+      box-shadow: 0 4px 18px rgba(26,93,219,0.38);
+      transition: transform 0.15s, box-shadow 0.15s, background 0.2s;
+      letter-spacing: 0.2px;
+    }
+    .lgn-btn:hover:not(:disabled) {
+      background: linear-gradient(135deg, #2369f0, #26a0d9);
+      box-shadow: 0 6px 26px rgba(26,93,219,0.55);
+      transform: translateY(-1px);
+    }
+    .lgn-btn:active:not(:disabled) { transform: translateY(0); }
+    .lgn-btn:disabled { opacity: 0.45; cursor: not-allowed; transform: none; }
+
+    /* ── Error message ── */
+    .lgn-error {
+      margin-top: 14px; padding: 10px 14px;
+      background: rgba(248,81,73,0.12); border: 1px solid rgba(248,81,73,0.25);
+      border-radius: 9px; font-size: 13px; color: #f85149; text-align: center;
+    }
+    .lgn-error.hidden { display: none; }
+
+    /* ── Bottom tag line ── */
+    .lgn-foot {
+      margin-top: 20px; text-align: center;
+      font-size: 11px; color: rgba(255,255,255,0.2);
+      letter-spacing: 0.5px;
+    }
+    body.light-theme .lgn-foot { color: rgba(0,0,0,0.25); }
+
+    /* ── Theme toggle ── */
+    #btn-theme-login {
+      position: fixed; top: 16px; right: 16px; z-index: 30;
+      background: rgba(255,255,255,0.07);
+      border: 1px solid rgba(255,255,255,0.12);
+      border-radius: 9px; padding: 7px 11px;
+      font-size: 16px; cursor: pointer;
+      color: rgba(255,255,255,0.55);
+      backdrop-filter: blur(10px);
+      transition: background 0.2s;
+    }
+    #btn-theme-login:hover { background: rgba(255,255,255,0.14); }
+    body.light-theme #btn-theme-login {
+      background: rgba(0,0,0,0.06); border-color: rgba(0,0,0,0.12);
+      color: rgba(0,0,0,0.5);
+    }
+
+    /* ── Powered-by strip at very bottom ── */
+    .lgn-powered {
+      position: fixed; bottom: 0; left: 0; right: 0; z-index: 10;
+      padding: 8px 20px;
+      display: flex; align-items: center; justify-content: center; gap: 16px;
+      background: rgba(6,11,20,0.72); border-top: 1px solid rgba(255,255,255,0.05);
+      backdrop-filter: blur(6px);
+      font-size: 11px; color: rgba(255,255,255,0.22); letter-spacing: 0.4px;
+    }
+    body.light-theme .lgn-powered {
+      background: rgba(240,242,245,0.85); border-top-color: rgba(0,0,0,0.07);
+      color: rgba(0,0,0,0.3);
+    }
+    .lgn-powered span { display: flex; align-items: center; gap: 5px; }
+    .lgn-dot { width: 5px; height: 5px; border-radius: 50%; background: rgba(255,255,255,0.15); }
+  </style>
+</head>
+<body>
+
+<!-- Full-screen background image + vignette -->
+<div class="lgn-bg"></div>
+<div class="lgn-overlay"></div>
+
+<div id="login-screen">
+  <div class="login-box">
+
+    <!-- Brand -->
+    <div class="lgn-brand">
+      <div class="lgn-brand-icon">📈</div>
+      <div class="lgn-brand-name">PilotX</div>
+      <div class="lgn-brand-tag">Automated Options Strategy</div>
+    </div>
+
+    <div class="lgn-hr"></div>
+
+    <!-- Form -->
+    <div class="lgn-field">
+      <label>Username</label>
+      <input type="text" id="username" placeholder="Enter your username" autocomplete="username"/>
+    </div>
+    <div class="lgn-field">
+      <label>Password</label>
+      <input type="password" id="password" placeholder="Enter your password" autocomplete="current-password"/>
+    </div>
+
+    <button class="lgn-btn" id="btn-login" onclick="login()">Sign In</button>
+    <div id="login-error" class="lgn-error hidden"></div>
+
+    <div class="lgn-foot">NSE Options &nbsp;·&nbsp; Zerodha Kite &nbsp;·&nbsp; Live Algo</div>
+  </div>
+</div>
+
+<!-- Theme toggle -->
+<button id="btn-theme-login" onclick="toggleTheme()" title="Toggle light/dark theme">☀️</button>
+
+<!-- Bottom strip -->
+<div class="lgn-powered">
+  <span>Secured with JWT</span>
+  <span class="lgn-dot"></span>
+  <span>Market data: NSE</span>
+  <span class="lgn-dot"></span>
+  <span>Powered by Zerodha Kite</span>
+</div>
+
+<script>
+(function () {
+  function applyTheme() {
+    const theme = localStorage.getItem('theme');
+    if (theme === 'light') {
+      document.body.classList.add('light-theme');
+      const btn = document.getElementById('btn-theme-login');
+      if (btn) btn.textContent = '🌙';
+    }
+  }
+  applyTheme();
+
+  const params = new URLSearchParams(window.location.search);
+  if (params.get('session') === 'expired') {
+    window.history.replaceState({}, document.title, '/login');
+    const errEl = document.getElementById('login-error');
+    if (errEl) {
+      errEl.textContent = '⏰ Your session has expired. Please log in again.';
+      errEl.classList.remove('hidden');
+    }
+  }
+
+  window.addEventListener('DOMContentLoaded', () => {
+    document.getElementById('username').focus();
+    document.getElementById('password').addEventListener('keydown', e => {
+      if (e.key === 'Enter') login();
+    });
+    document.getElementById('username').addEventListener('keydown', e => {
+      if (e.key === 'Enter') document.getElementById('password').focus();
+    });
+  });
+})();
+
+function toggleTheme() {
+  const isLight = document.body.classList.toggle('light-theme');
+  localStorage.setItem('theme', isLight ? 'light' : 'dark');
+  const btn = document.getElementById('btn-theme-login');
+  if (btn) btn.textContent = isLight ? '🌙' : '☀️';
+}
+
+async function login() {
+  const username = document.getElementById('username').value.trim();
+  const password = document.getElementById('password').value.trim();
+  const errEl    = document.getElementById('login-error');
+  const btn      = document.getElementById('btn-login');
+
+  if (!username || !password) {
+    errEl.textContent = 'Please enter username and password.';
+    errEl.classList.remove('hidden');
+    return;
+  }
+
+  errEl.classList.add('hidden');
+  btn.disabled = true;
+  btn.textContent = 'Signing in…';
+
+  try {
+    const res = await fetch('/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password })
+    });
+
+    if (!res.ok) throw new Error('invalid');
+
+    const data = await res.json();
+    localStorage.setItem('jwtToken',    data.token);
+    localStorage.setItem('jwtUsername', username);
+    localStorage.setItem('userRole',    data.role || 'TRADER');
+    localStorage.setItem('maxLotSize',  data.maxLotSize || 1);
+    window.location.href = '/algo';
+  } catch (_) {
+    errEl.textContent = 'Invalid username or password.';
+    errEl.classList.remove('hidden');
+    btn.disabled = false;
+    btn.textContent = 'Sign In';
+    document.getElementById('password').select();
+  }
+}
+</script>
+</body>
+</html>

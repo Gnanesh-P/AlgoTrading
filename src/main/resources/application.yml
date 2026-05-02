@@ -15,21 +15,28 @@ app:
     # !! Set JWT_SECRET in Render env vars — must be >= 64 chars for HS512 !!
     secret: ${JWT_SECRET:AlgoTradingSecretKey2024@#$%AlgoTradingSecretKey2024@#$%AlgoTradingSecretKey}
     expiration-ms: ${JWT_EXPIRY_MS:86400000}   # 24 hours default
+  telegram:
+    bot-token: ${TELEGRAM_BOT_TOKEN:8643844696:AAEXrnBEu7uXn8LlNIna06mglD473wed7Pk}
+    chat-id: ${TELEGRAM_CHAT_ID:-5270751014}
   credentials:
     # Up to 4 users sharing one Zerodha account.
     # Override with Render/Docker env vars. Entries with a blank username are ignored.
     users:
       - username: ${APP_USERNAME:admin}
         password: ${APP_PASSWORD:admin123}
+        max-lot-size: ${APP_MAX_LOTS:50}
       - username: ${APP_USER2:gowtham}
         password: ${APP_PASS2:admin123}
+        max-lot-size: ${APP_MAX_LOTS2:1}
       - username: ${APP_USER3:nithish}
         password: ${APP_PASS3:nithish123}
+        max-lot-size: ${APP_MAX_LOTS3:1}
       - username: ${APP_USER4:gnanesh}
         password: ${APP_PASS4:gnanesh123}
+        max-lot-size: ${APP_MAX_LOTS4:1}
   # Persistent data directory.  On Render: mount a disk at /data and set DATA_DIR=/data
-  users-file:   ${USERS_FILE:/app/data/users.json}
-  session-file: ${SESSION_FILE:/app/data/session.json}
+  users-file:   ${USERS_FILE:./data/users.json}
+  session-file: ${SESSION_FILE:./data/session.json}
   trading:
     market-open: "09:15"
     market-close: "15:30"

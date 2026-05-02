@@ -24,7 +24,7 @@ import java.util.Map;
  */
 @RestController
 @RequestMapping("/api/admin")
-@PreAuthorize("hasRole('ADMIN')")
+@PreAuthorize("hasRole('GNANESH')")
 @RequiredArgsConstructor
 @Slf4j
 public class AdminController {

@@ -10,33 +10,39 @@ let futureToken = 0;
 let ceToken     = 0;
 let peToken     = 0;
 
+function isAdmin() {
+  return localStorage.getItem('userRole') === 'GNANESH';
+}
+
 window.onload = () => {
+  applyStoredTheme();
+
+  if (!token) {
+    window.location.replace('/login');
+    return;
+  }
+
+  // Always canonicalise URL to /algo (handles direct visits to / or /index.html)
+  const path = window.location.pathname;
+  if (path === '/' || path === '/index.html') {
+    window.location.replace('/algo' + window.location.search);
+    return;
+  }
+
   const params = new URLSearchParams(window.location.search);
-
   if (params.get('kite') === 'connected') {
-    window.history.replaceState({}, document.title, '/');
-    if (token) {
-      showDashboard();
-      showMsg('config-msg', '✅ Kite connected successfully!', 'success');
-      refreshKiteStatus();
-    }
+    window.history.replaceState({}, document.title, '/algo');
+    showMsg('config-msg', '✅ Kite connected successfully!', 'success');
+    refreshKiteStatus();
   }
 
-  if (params.get('session') === 'expired') {
-    window.history.replaceState({}, document.title, '/');
-    const errEl = document.getElementById('login-error');
-    if (errEl) {
-      errEl.textContent = '⏰ Your session has expired. Please log in again.';
-      errEl.classList.remove('hidden');
-    }
-  }
-
-  if (token) { showDashboard(); init(); }
+  init();
   setInterval(updateClock, 1000);
   updateClock();
 };
 
 function init() {
+  applyRoleVisibility();
   connectWebSocket();
   refreshKiteStatus();
   startPricePoller();
@@ -55,10 +61,37 @@ function init() {
   fetchAndRenderStatus();
 }
 
+function getMaxLotSize() {
+  return parseInt(localStorage.getItem('maxLotSize') || '1');
+}
+
+function applyRoleVisibility() {
+  const admin = isAdmin();
+  document.querySelectorAll('.admin-only').forEach(el => {
+    el.style.display = admin ? '' : 'none';
+  });
+  document.querySelectorAll('.user-only').forEach(el => {
+    el.style.display = admin ? 'none' : '';
+  });
+
+  // Enforce lot input cap based on user's allowed max
+  const lotEl = document.getElementById('cfg-lot-qty');
+  if (lotEl) {
+    const max = getMaxLotSize();
+    lotEl.max = max;
+    const hint = lotEl.closest('.form-group')?.querySelector('span');
+    if (hint && !admin) {
+      hint.textContent = `Max ${max} lot${max !== 1 ? 's' : ''} allowed for your account`;
+    }
+  }
+}
+
 function updateQtyDisplay() {
   const lots  = parseInt(document.getElementById('cfg-lot-qty')?.value) || 1;
   const total = document.getElementById('qty-total');
   if (total) total.textContent = (lots * 65).toLocaleString('en-IN');
+  const totalUser = document.getElementById('qty-total-user');
+  if (totalUser) totalUser.textContent = (lots * 65).toLocaleString('en-IN');
 }
 
 function populateStartTimes() {
@@ -68,8 +101,9 @@ function populateStartTimes() {
   const nowIst  = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
   const nowMins = nowIst.getHours() * 60 + nowIst.getMinutes();
 
-  const START_H = 9,  START_M = 15;
-  const END_H   = 15, END_M   = 27;
+  const START_H = 9, START_M = 15;
+  const END_H   = isAdmin() ? 15 : 9;
+  const END_M   = isAdmin() ? 27 : 20;
 
   const startTotal = START_H * 60 + START_M;
   const endTotal   = END_H   * 60 + END_M;
@@ -97,41 +131,34 @@ function populateStartTimes() {
   }
 }
 
-async function login() {
-  const username = document.getElementById('username').value.trim();
-  const password = document.getElementById('password').value.trim();
-  const errEl    = document.getElementById('login-error');
-  errEl.classList.add('hidden');
-  try {
-    const res = await post('/api/auth/login', { username, password }, false);
-    token = res.token;
-    localStorage.setItem('jwtToken', token);
-    localStorage.setItem('jwtUsername', username);
-    showDashboard();
-    init();
-  } catch (e) {
-    errEl.textContent = 'Invalid username or password';
-    errEl.classList.remove('hidden');
-  }
-}
 
 function logout() {
   token = '';
-  localStorage.removeItem('jwtToken');
-  localStorage.removeItem('jwtUsername');
-  if (wsClient)     wsClient.close();
-  if (pricePoller)  clearInterval(pricePoller);
-  if (statusPoller) clearInterval(statusPoller);
-  const s = document.getElementById('btn-start');
-  const e = document.getElementById('btn-stop');
-  if (s) s.disabled = true;
-  if (e) e.disabled = true;
-  window.location.href = '/';
+  try { localStorage.removeItem('jwtToken');    } catch(_) {}
+  try { localStorage.removeItem('jwtUsername'); } catch(_) {}
+  try { localStorage.removeItem('userRole');    } catch(_) {}
+  try { localStorage.removeItem('maxLotSize');  } catch(_) {}
+  try { if (wsClient)     { wsClient.disconnect(); wsClient = null; } } catch(_) {}
+  try { if (pricePoller)  { clearInterval(pricePoller);  pricePoller  = null; } } catch(_) {}
+  try { if (statusPoller) { clearInterval(statusPoller); statusPoller = null; } } catch(_) {}
+  window.location.replace('/login');
 }
 
-function showDashboard() {
-  document.getElementById('login-screen').classList.add('hidden');
-  document.getElementById('dashboard').classList.remove('hidden');
+// ===== THEME TOGGLE =====
+function toggleTheme() {
+  const isLight = document.body.classList.toggle('light-theme');
+  localStorage.setItem('theme', isLight ? 'light' : 'dark');
+  const btn = document.getElementById('btn-theme');
+  if (btn) btn.textContent = isLight ? '🌙' : '☀️';
+}
+
+function applyStoredTheme() {
+  const theme = localStorage.getItem('theme');
+  if (theme === 'light') {
+    document.body.classList.add('light-theme');
+    const btn = document.getElementById('btn-theme');
+    if (btn) btn.textContent = '🌙';
+  }
 }
 
 async function connectKite() {
@@ -330,6 +357,19 @@ async function saveConfig() {
   const slEnabled  = document.getElementById('sl-enabled').checked;
   const lots = parseInt(document.getElementById('cfg-lot-qty').value) || 1;
 
+  const maxLots = getMaxLotSize();
+  if (lots > maxLots) {
+    showMsg('config-msg',
+      `❌ Lot quantity ${lots} exceeds your account limit of ${maxLots} lot${maxLots !== 1 ? 's' : ''}. Please reduce.`,
+      'error');
+    return;
+  }
+
+  // Normal users always get 10 max reversals (field is hidden)
+  const maxReversals = isAdmin()
+    ? parseInt(document.getElementById('cfg-max-reversals').value)
+    : 10;
+
   savedConfig = {
     futureSymbol:    futSel.value,
     futureToken,
@@ -339,7 +379,7 @@ async function saveConfig() {
     entryStartTime:  startTimeSel.value,
     strikeMode:      strikeMode === 'AUTO_ATM' ? 'AUTO' : 'MANUAL',
     lotQuantity:     lots,
-    maxReversals:    parseInt(document.getElementById('cfg-max-reversals').value),
+    maxReversals,
     targetPrice:     parseFloat(document.getElementById('cfg-target').value),
     stopLoss:        slEnabled ? parseFloat(document.getElementById('cfg-sl').value) : 0,
     trailingProfit:  parseFloat(document.getElementById('cfg-trailing').value) || 0,
@@ -383,6 +423,7 @@ async function startStrategy() {
 }
 
 async function stopStrategy() {
+  if (!confirm('Are you sure you want to stop the strategy? Any open position will be squared off.')) return;
   setStrategyButtonsLoading(true);
   try {
     await post('/algo/stop', {});
@@ -407,7 +448,7 @@ async function resetPnl() {
   bar.style.width = '50%';
   bar.style.background = 'var(--success)';
   const tbody = document.getElementById('legs-body');
-  tbody.innerHTML = '<tr><td colspan="8" class="empty-row">No trades yet</td></tr>';
+  if (tbody) tbody.innerHTML = '<tr><td colspan="8" class="empty-row">No trades yet</td></tr>';
   currentSession = null;
 }
 
@@ -485,6 +526,7 @@ function renderSession(s) {
   stateEl.textContent = status;
   stateEl.className   = 'status-value badge badge-' + status.toLowerCase().replace(/_/g, '');
 
+  // Admin-only status fields
   const startedByEl = document.getElementById('s-started-by');
   if (startedByEl) {
     startedByEl.textContent = s.startedBy || '—';
@@ -585,7 +627,6 @@ function renderSession(s) {
   document.getElementById('btn-start').disabled = !isStopped;
   document.getElementById('btn-stop').disabled  =  isStopped;
 
-  // Dim the config strip when strategy is stopped so UI clearly reflects the state
   if (strip) strip.style.opacity = isStopped ? '0.55' : '1';
 
   const liveParamsSection = document.getElementById('live-params-section');
@@ -620,6 +661,70 @@ function renderSession(s) {
   updateFooter(s.paperTrade ? 'PAPER' : 'LIVE');
 
   renderHistory(s.history || []);
+
+  // Update normal-user panels
+  if (!isAdmin()) {
+    renderUserSignalPanel(s);
+    renderUserSessionCard(s);
+  }
+}
+
+function renderUserSignalPanel(s) {
+  const dirIcon  = document.getElementById('user-dir-icon');
+  const dirLabel = document.getElementById('user-dir-label');
+  if (dirIcon && dirLabel) {
+    if (s.currentPosition === 'CE') {
+      dirIcon.textContent  = '▲';
+      dirIcon.style.color  = '#58a6ff';
+      dirLabel.textContent = 'CE — Bullish';
+      dirLabel.style.color = '#58a6ff';
+    } else if (s.currentPosition === 'PE') {
+      dirIcon.textContent  = '▼';
+      dirIcon.style.color  = '#f85149';
+      dirLabel.textContent = 'PE — Bearish';
+      dirLabel.style.color = '#f85149';
+    } else {
+      const st = s.status || '';
+      dirIcon.textContent  = st === 'WAITING_FOR_CANDLES' ? '⏳' : '—';
+      dirIcon.style.color  = 'var(--text2)';
+      dirLabel.textContent = st === 'WAITING_FOR_CANDLES' ? 'Scanning...' : 'No Position';
+      dirLabel.style.color = 'var(--text2)';
+    }
+  }
+  const userMode   = document.getElementById('user-trade-mode-info');
+  const userLots   = document.getElementById('user-lots-info');
+  const userTarget = document.getElementById('user-target-info');
+  const userSl     = document.getElementById('user-sl-info');
+  if (userMode)   userMode.textContent   = s.paperTrade ? '📄 Paper' : '🔴 Live';
+  if (userLots)   userLots.textContent   = (s.lotQuantity || 1) + ' lot × 65';
+  if (userTarget) userTarget.textContent = s.targetPnL ? '₹' + fmt(s.targetPnL) : '—';
+  if (userSl)     userSl.textContent     = (s.stopLossPoints || 0) > 0 ? '₹' + fmt(s.stopLossPoints) : 'Off';
+}
+
+function renderUserSessionCard(s) {
+  const dot    = document.getElementById('usc-dot');
+  const status = document.getElementById('usc-status-text');
+  const date   = document.getElementById('usc-date');
+  if (!dot) return;
+
+  const active = s.active;
+  const st     = s.status || 'IDLE';
+
+  if (active) {
+    dot.className    = 'usc-dot usc-dot-active';
+    status.textContent = st === 'WAITING_FOR_CANDLES' ? 'Scanning market…' : 'Strategy running';
+  } else if (st === 'STOPPED') {
+    dot.className    = 'usc-dot usc-dot-stopped';
+    status.textContent = 'Session complete';
+  } else {
+    dot.className    = 'usc-dot usc-dot-idle';
+    status.textContent = 'Awaiting start';
+  }
+
+  const now = new Date();
+  date.textContent = now.toLocaleDateString('en-IN', {
+    timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', year: 'numeric'
+  });
 }
 
 function renderCandle(candle, prefix) {
@@ -636,6 +741,7 @@ function renderCandle(candle, prefix) {
 
 function renderHistory(rows) {
   const tbody = document.getElementById('legs-body');
+  if (!tbody) return;
   if (!rows.length) {
     tbody.innerHTML = '<tr><td colspan="8" class="empty-row">No trades yet</td></tr>';
     return;
@@ -791,10 +897,12 @@ function handleSessionExpired() {
   token = '';
   localStorage.removeItem('jwtToken');
   localStorage.removeItem('jwtUsername');
+  localStorage.removeItem('userRole');
+  localStorage.removeItem('maxLotSize');
   if (wsClient)     wsClient.close();
   if (pricePoller)  clearInterval(pricePoller);
   if (statusPoller) clearInterval(statusPoller);
-  window.location.href = '/?session=expired';
+  window.location.replace('/login?session=expired');
 }
 
 function fmt(n) {
