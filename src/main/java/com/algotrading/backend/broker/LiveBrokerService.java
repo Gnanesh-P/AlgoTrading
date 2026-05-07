@@ -112,8 +112,9 @@ public class LiveBrokerService implements BrokerService {
                     transactionType, instrument, quantity, order.orderId, order.orderId);
             return order.orderId;
         } catch (Exception | KiteException e) {
-            log.error("[LIVE] placeOrder failed [{} {} x{}]: {}", transactionType, instrument, quantity, e.getMessage());
-            throw new RuntimeException("Order failed: " + e.getMessage(), e);
+            String cause = e.getClass().getSimpleName() + ": " + e.getMessage();
+            log.error("[LIVE] placeOrder failed [{} {} x{}]: {}", transactionType, instrument, quantity, cause, e);
+            throw new RuntimeException("Order failed: " + cause, e);
         }
     }
 

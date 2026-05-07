@@ -144,6 +144,7 @@ public class KiteTickerService {
     private void disconnectExisting() {
         if (ticker != null) {
             try {
+                ticker.setTryReconnection(false); // cancel pending retry timer before disconnecting
                 ticker.disconnect();
             } catch (Exception e) {
                 log.debug("Error disconnecting old ticker: {}", e.getMessage());

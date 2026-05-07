@@ -66,6 +66,13 @@ kite:
   base-url:  https://api.kite.trade
   login-url: https://kite.zerodha.com/connect/login
 
+proxy:
+  enabled: ${PROXY_ENABLED:true}
+  host: ${PROXY_HOST:dc-mum-600.staticip.in}
+  port: ${PROXY_PORT:443}
+  username: ${PROXY_USERNAME:5QtTGUMSR9asqnNhmJEgtU}
+  password: ${PROXY_PASSWORD:947d2cda3d7648089d335a92e826712e}
+
 logging:
   level:
     com.algotrading: DEBUG
