@@ -22,18 +22,14 @@ app:
     # Up to 4 users sharing one Zerodha account.
     # Override with Render/Docker env vars. Entries with a blank username are ignored.
     users:
-      - username: ${APP_USERNAME:admin}
-        password: ${APP_PASSWORD:admin123}
-        max-lot-size: ${APP_MAX_LOTS:50}
-      - username: ${APP_USER2:gowtham}
-        password: ${APP_PASS2:admin123}
-        max-lot-size: ${APP_MAX_LOTS2:1}
-      - username: ${APP_USER3:nithish}
-        password: ${APP_PASS3:nithish123}
-        max-lot-size: ${APP_MAX_LOTS3:1}
-      - username: ${APP_USER4:gnanesh}
-        password: ${APP_PASS4:gnanesh123}
-        max-lot-size: ${APP_MAX_LOTS4:1}
+      - username: ${APP_USERNAME:test}
+        password: ${APP_PASSWORD:test123}
+        max-lot-size: ${APP_MAX_LOTS:15}
+        role: ${APP_ROLE:TRADER}
+      - username: ${APP_USER2:user}
+        password: ${APP_PASS2:user123}
+        max-lot-size: ${APP_MAX_LOTS2:5}
+        role: ${APP_ROLE2:TRADER}
   # Persistent data directory.  On Render: mount a disk at /data and set DATA_DIR=/data
   users-file:   ${USERS_FILE:./data/users.json}
   session-file: ${SESSION_FILE:./data/session.json}
@@ -77,3 +73,4 @@ logging:
   level:
     com.algotrading: DEBUG
     org.springframework.security: WARN
+    org.springframework.web.socket.config.WebSocketMessageBrokerStats: OFF

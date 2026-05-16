@@ -66,7 +66,6 @@ public class AlgoController {
         }
 
         if (engineRegistry.hasActiveEngine(startedBy)) {
-            log.warn("Start rejected for [{}]: already has an active session", startedBy);
             return ResponseEntity.status(HttpStatus.CONFLICT)
                     .body("You already have an active session. Stop it first before starting a new one.");
         }
@@ -107,8 +106,6 @@ public class AlgoController {
                     .ifPresentOrElse(
                             i -> {
                                 instruments.put(i.getInstrumentToken(), i.getTradingsymbol());
-                                log.info("[{}] Futures token auto-resolved: {} → token={}",
-                                        startedBy, i.getTradingsymbol(), i.getInstrumentToken());
                             },
                             () -> log.warn("[{}] Futures token=0 and not in cache for [{}]. "
                                     + "Candle closes will not arrive until Kite is connected.",
@@ -127,8 +124,6 @@ public class AlgoController {
         tickerService.unsubscribeAll();
         if (!instruments.isEmpty()) {
             tickerService.subscribe(instruments);
-            log.info("[{}] Global KiteTicker subscribed {} instruments: {}",
-                    startedBy, instruments.size(), instruments.values());
         }
 
         PlatformUser user = platformUserOpt.orElseGet(() ->

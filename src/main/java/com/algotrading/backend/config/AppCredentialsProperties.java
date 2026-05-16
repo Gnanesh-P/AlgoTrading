@@ -30,6 +30,7 @@ public class AppCredentialsProperties {
     @Data
     public static class UserEntry {
         private String username = "";
+        private String role = "";
         private String password = "";
         private int maxLotSize = 1;
 

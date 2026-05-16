@@ -103,7 +103,7 @@
     </dependencies>
 
     <build>
-        <finalName>alog-trading-service</finalName>
+        <finalName>alog-trading-proxy</finalName>
         <plugins>
             <plugin>
                 <groupId>org.springframework.boot</groupId>

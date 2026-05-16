@@ -50,7 +50,6 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(Exception.class)
     public ResponseEntity<Map<String, Object>> handleGeneral(Exception ex) {
-        log.error("Unexpected error: ", ex);
         return errorResponse(HttpStatus.INTERNAL_SERVER_ERROR, "Internal server error");
     }
 

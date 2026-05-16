@@ -18,6 +18,8 @@ import java.util.*;
 import java.util.concurrent.locks.ReadWriteLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 
+import static org.apache.logging.log4j.util.Strings.isNotBlank;
+
 /**
  * Loads and persists all platform users from/to a JSON file.
  *
@@ -220,8 +222,9 @@ public class UserRegistryService {
 
         boolean firstEntry = true;
         for (AppCredentialsProperties.UserEntry entry : entries) {
-            String role = firstEntry ? "GNANESH" : "TRADER";
-            firstEntry = false;
+//            String role = firstEntry ? "GNANESH" : "TRADER";
+//            firstEntry = false;.
+            String role = isNotBlank(entry.getRole()) ? entry.getRole(): "TRADER";
             PlatformUser user = PlatformUser.builder()
                     .id(UUID.randomUUID().toString())
                     .username(entry.getUsername())
@@ -239,22 +242,22 @@ public class UserRegistryService {
         }
 
         // Always ensure at least one admin exists
-        if (users.stream().noneMatch(u -> "GNANESH".equals(u.getRole()))) {
-            PlatformUser admin = PlatformUser.builder()
-                    .id(UUID.randomUUID().toString())
-                    .username("admin")
-                    .passwordHash(passwordEncoder.encode("admin123"))
-                    .role("GNANESH")
-                    .enabled(true)
-                    .maxLotSize(50)
-                    .planExpiryDate(LocalDate.of(2099, 12, 31))
-                    .notes("Default admin — change password immediately!")
-                    .createdAt(LocalDateTime.now())
-                    .updatedAt(LocalDateTime.now())
-                    .build();
-            users.add(admin);
-            log.info("Created fallback default admin");
-        }
+//        if (users.stream().noneMatch(u -> "GNANESH".equals(u.getRole()))) {
+//            PlatformUser admin = PlatformUser.builder()
+//                    .id(UUID.randomUUID().toString())
+//                    .username("admin")
+//                    .passwordHash(passwordEncoder.encode("admin123"))
+//                    .role("GNANESH")
+//                    .enabled(true)
+//                    .maxLotSize(50)
+//                    .planExpiryDate(LocalDate.of(2099, 12, 31))
+//                    .notes("Default admin — change password immediately!")
+//                    .createdAt(LocalDateTime.now())
+//                    .updatedAt(LocalDateTime.now())
+//                    .build();
+//            users.add(admin);
+//            log.info("Created fallback default admin");
+//        }
 
         persist();
     }
