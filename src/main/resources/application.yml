@@ -34,6 +34,7 @@ app:
   users-file:   ${USERS_FILE:./data/users.json}
   session-file: ${SESSION_FILE:./data/session.json}
   kite-token-file: ${SECRET_TOKEN_FILE:./data/kite-access-token.txt}
+  user-session-file: ${USER_SESSION_FILE:./data/session/}
   trading:
     market-open: "09:15"
     market-close: "15:30"
