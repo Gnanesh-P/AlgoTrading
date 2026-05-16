@@ -33,6 +33,7 @@ app:
   # Persistent data directory.  On Render: mount a disk at /data and set DATA_DIR=/data
   users-file:   ${USERS_FILE:./data/users.json}
   session-file: ${SESSION_FILE:./data/session.json}
+  kite-token-file: ${SECRET_TOKEN_FILE:./data/kite-access-token.txt}
   trading:
     market-open: "09:15"
     market-close: "15:30"
