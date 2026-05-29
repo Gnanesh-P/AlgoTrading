@@ -251,7 +251,16 @@ public class UserTradingEngine {
             p.quantity = qty;
             p.product = Constants.PRODUCT_MIS;
             p.validity = Constants.VALIDITY_DAY;
-            OrderResponse order = kiteConnect.placeOrder(p, Constants.VARIETY_REGULAR);
+            OrderResponse order;
+            if(qty>1755) {
+            	int legs=calculateIceBergLegs(qty);
+            	p.icebergLegs=(legs);
+            	p.icebergQuantity=1755;
+            	 order = kiteConnect.placeOrder(p, Constants.VARIETY_ICEBERG);
+                 log.info("Iceberg order exeuted in {} legs",legs);
+            }else {
+             order = kiteConnect.placeOrder(p, Constants.VARIETY_REGULAR);
+            }
             log.info("[{}][LIVE] BUY {} x{} @ limit={} (ltp={}) → orderId={}", username, instrument, qty, limitPrice, ltp, order.orderId);
             // Poll actual fill price so trade logs match what Zerodha executed
             double fillPrice = pollActualFillPrice(order.orderId, instrument, ltp);
@@ -283,7 +292,16 @@ public class UserTradingEngine {
             p.quantity = qty;
             p.product = Constants.PRODUCT_MIS;
             p.validity = Constants.VALIDITY_DAY;
-            OrderResponse order = kiteConnect.placeOrder(p, Constants.VARIETY_REGULAR);
+            OrderResponse order;          
+            if(qty>1755) {
+            	int legs=calculateIceBergLegs(qty);
+            	p.icebergLegs=(legs);
+            	p.icebergQuantity=1755;
+            	 order = kiteConnect.placeOrder(p, Constants.VARIETY_ICEBERG);
+                 log.info("Iceberg order exeuted in {} legs",legs);
+            }else {
+             order = kiteConnect.placeOrder(p, Constants.VARIETY_REGULAR);
+            }
             log.info("[{}][LIVE] SELL {} x{} @ limit={} (ltp={}) → orderId={}", username, instrument, qty, limitPrice, ltp, order.orderId);
             // Poll actual fill price so trade logs and P&L match what Zerodha executed
             double fillPrice = pollActualFillPrice(order.orderId, instrument, ltp);
@@ -292,6 +310,15 @@ public class UserTradingEngine {
         } catch (Exception | KiteException e) {
             throw new RuntimeException("[" + username + "] SELL order failed: " + e.getMessage(), e);
         }
+    }
+    
+    /**
+     * To caculate number legs for the quantites
+     * @param qty
+     * @return
+     */
+    private int calculateIceBergLegs(int qty) {
+    	return (int) Math.ceil((double)qty/1755);
     }
 
     /**
