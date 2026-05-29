@@ -313,9 +313,7 @@ public class UserTradingEngine {
     }
     
     /**
-     * To caculate number legs for the quantites
-     * @param qty
-     * @return
+     * To caculate number of legs for the iceberg
      */
     private int calculateIceBergLegs(int qty) {
     	return (int) Math.ceil((double)qty/1755);
