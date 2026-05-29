@@ -254,7 +254,7 @@ public class UserTradingEngine {
             OrderResponse order;
             if(qty>1755) {
             	int legs=calculateIceBergLegs(qty);
-            	p.icebergLegs=(legs);
+            	p.icebergLegs=legs;
             	p.icebergQuantity=1755;
             	 order = kiteConnect.placeOrder(p, Constants.VARIETY_ICEBERG);
                  log.info("Iceberg order exeuted in {} legs",legs);
@@ -295,7 +295,7 @@ public class UserTradingEngine {
             OrderResponse order;          
             if(qty>1755) {
             	int legs=calculateIceBergLegs(qty);
-            	p.icebergLegs=(legs);
+            	p.icebergLegs=legs;
             	p.icebergQuantity=1755;
             	 order = kiteConnect.placeOrder(p, Constants.VARIETY_ICEBERG);
                  log.info("Iceberg order exeuted in {} legs",legs);
