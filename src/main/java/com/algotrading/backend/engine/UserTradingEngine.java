@@ -263,7 +263,7 @@ public class UserTradingEngine {
             	p.icebergLegs=legs;
             	p.icebergQuantity=lotsPerLeg*65;
             	 order = kiteConnect.placeOrder(p, Constants.VARIETY_ICEBERG);
-                 log.info("Iceberg order exeuted in {} legs",legs);
+                 log.info("Iceberg order executed in {} legs",legs);
             }else {
              order = kiteConnect.placeOrder(p, Constants.VARIETY_REGULAR);
             }
@@ -309,7 +309,7 @@ public class UserTradingEngine {
             	p.icebergLegs=legs;
             	p.icebergQuantity=lotsPerLeg*65;
             	 order = kiteConnect.placeOrder(p, Constants.VARIETY_ICEBERG);
-                 log.info("Iceberg order exeuted in {} legs",legs);
+                 log.info("Iceberg order executed in {} legs",legs);
             }else {
              order = kiteConnect.placeOrder(p, Constants.VARIETY_REGULAR);
             }
