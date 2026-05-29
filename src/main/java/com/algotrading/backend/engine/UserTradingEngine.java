@@ -253,9 +253,15 @@ public class UserTradingEngine {
             p.validity = Constants.VALIDITY_DAY;
             OrderResponse order;
             if(qty>1755) {
+ 
             	int legs=calculateIceBergLegs(qty);
+            	int lots=qty/65;
+            	
+            	//max no of lots per leg
+            	int lotsPerLeg=(int)Math.ceil((double)lots/legs);
+            	
             	p.icebergLegs=legs;
-            	p.icebergQuantity=1755;
+            	p.icebergQuantity=lotsPerLeg*65;
             	 order = kiteConnect.placeOrder(p, Constants.VARIETY_ICEBERG);
                  log.info("Iceberg order exeuted in {} legs",legs);
             }else {
@@ -295,8 +301,13 @@ public class UserTradingEngine {
             OrderResponse order;          
             if(qty>1755) {
             	int legs=calculateIceBergLegs(qty);
+            	int lots=qty/65;
+            	
+            	//max no of lots per leg
+            	int lotsPerLeg=(int)Math.ceil((double)lots/legs);
+            	
             	p.icebergLegs=legs;
-            	p.icebergQuantity=1755;
+            	p.icebergQuantity=lotsPerLeg*65;
             	 order = kiteConnect.placeOrder(p, Constants.VARIETY_ICEBERG);
                  log.info("Iceberg order exeuted in {} legs",legs);
             }else {
