@@ -154,7 +154,7 @@ public class OptionInstrumentService {
 
         int tradingDaysToExpiry = countTradingDays(today, expiry);
 
-        if (tradingDaysToExpiry <= 1) {
+        if (tradingDaysToExpiry == 0) {
             LocalDate nextExpiry = findExpiryAfter(expiry);
             log.info("AUTO expiry: {} trading day(s) to {}, switching to {}", tradingDaysToExpiry, expiry, nextExpiry);
             expiry = nextExpiry;

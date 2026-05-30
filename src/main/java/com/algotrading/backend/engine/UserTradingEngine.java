@@ -251,7 +251,8 @@ public class UserTradingEngine {
             p.quantity = qty;
             p.product = Constants.PRODUCT_MIS;
             p.validity = Constants.VALIDITY_DAY;
-            OrderResponse order = kiteConnect.placeOrder(p, Constants.VARIETY_REGULAR);
+            p.autoslice=true;
+            OrderResponse order= kiteConnect.placeOrder(p, Constants.VARIETY_REGULAR);
             log.info("[{}][LIVE] BUY {} x{} @ limit={} (ltp={}) → orderId={}", username, instrument, qty, limitPrice, ltp, order.orderId);
             // Poll actual fill price so trade logs match what Zerodha executed
             double fillPrice = pollActualFillPrice(order.orderId, instrument, ltp);
@@ -283,6 +284,7 @@ public class UserTradingEngine {
             p.quantity = qty;
             p.product = Constants.PRODUCT_MIS;
             p.validity = Constants.VALIDITY_DAY;
+            p.autoslice=true;
             OrderResponse order = kiteConnect.placeOrder(p, Constants.VARIETY_REGULAR);
             log.info("[{}][LIVE] SELL {} x{} @ limit={} (ltp={}) → orderId={}", username, instrument, qty, limitPrice, ltp, order.orderId);
             // Poll actual fill price so trade logs and P&L match what Zerodha executed
@@ -322,7 +324,7 @@ public class UserTradingEngine {
                     }
                 }
                 Thread.sleep(200);
-            } catch (InterruptedException ie) {
+            } catch (InterruptedException ie) { 
                 Thread.currentThread().interrupt();
                 break;
             } catch (Exception | KiteException e) {
