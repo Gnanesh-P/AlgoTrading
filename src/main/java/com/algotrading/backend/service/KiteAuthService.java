@@ -1,6 +1,8 @@
 package com.algotrading.backend.service;
 
 import com.algotrading.backend.config.KiteProperties;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.zerodhatech.kiteconnect.KiteConnect;
 import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
@@ -9,6 +11,8 @@ import org.springframework.http.*;
 import org.springframework.stereotype.Service;
 import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
+import org.springframework.web.client.HttpClientErrorException;
+import org.springframework.web.client.HttpServerErrorException;
 import org.springframework.web.client.RestTemplate;
 
 import java.nio.charset.StandardCharsets;
@@ -95,6 +99,35 @@ public class KiteAuthService {
                 }
             }
             throw new RuntimeException("Token exchange failed: " + response.getBody());
+        } catch (HttpClientErrorException | HttpServerErrorException httpEx) {
+            String responseBody = httpEx.getResponseBodyAsString();
+            log.error("Kite token exchange HTTP error [{}]: {}", httpEx.getStatusCode(), responseBody);
+
+            String errorType = null;
+            String message = null;
+            try {
+                JsonNode node = new ObjectMapper().readTree(responseBody);
+                if (node.hasNonNull("error_type")) errorType = node.get("error_type").asText();
+                if (node.hasNonNull("message")) message = node.get("message").asText();
+            } catch (Exception parseEx) {
+                // responseBody wasn't valid JSON — fall through with raw body as message
+            }
+
+            boolean isTokenError = "TokenException".equalsIgnoreCase(errorType)
+                    || (message != null && message.toLowerCase().contains("invalid user session"));
+
+            if (isTokenError) {
+                // The request_token in the Kite OAuth callback is single-use and short-lived.
+                // This happens when the login link is reused, opened twice, or expired before
+                // the user reached this step — not a bug, just a stale/replayed login attempt.
+                throw new IllegalStateException(
+                        "Kite login link expired or already used. Please click \"Connect via OAuth\" again "
+                                + "to get a fresh login link, then complete the Kite login promptly without "
+                                + "reopening old tabs or links.");
+            }
+
+            throw new RuntimeException("Kite authentication failed: "
+                    + (message != null ? message : responseBody));
         } catch (Exception e) {
             log.error("Kite token exchange error: {}", e.getMessage());
             throw new RuntimeException("Kite authentication failed: " + e.getMessage());

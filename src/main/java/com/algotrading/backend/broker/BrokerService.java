@@ -31,9 +31,9 @@ public interface BrokerService {
     boolean isPaper();
 
     /**
-     * Returns true if there is an open (net positive) position for the given instrument.
-     * Used before placing a sell order to avoid double-selling a position already
-     * closed manually via Kite or another terminal.
+     * Returns true if there is an open position (long OR short — net quantity != 0) for the
+     * given instrument. Used before placing an exit order to avoid double-exiting a position
+     * already closed manually via Kite or another terminal.
      */
     boolean hasOpenPosition(String instrument);
 }

@@ -3,8 +3,8 @@ package com.algotrading.backend.controller;
 import com.algotrading.backend.dto.AlgoStartRequest;
 import com.algotrading.backend.dto.AlgoStatusResponse;
 import com.algotrading.backend.dto.AlgoUpdateParamsRequest;
+import com.algotrading.backend.engine.TradingEngine;
 import com.algotrading.backend.engine.TradingEngineRegistry;
-import com.algotrading.backend.engine.UserTradingEngine;
 import com.algotrading.backend.model.*;
 import com.algotrading.backend.service.AlgoSchedulerService;
 import com.algotrading.backend.service.CandleAggregatorService;
@@ -24,6 +24,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.stream.Collectors;
 
 @RestController
 @RequiredArgsConstructor
@@ -37,11 +38,33 @@ public class AlgoController {
     private final CandleAggregatorService candleAggregator;
     private final AlgoSchedulerService    schedulerService;
 
+    private StrategyKey resolveStrategyKey(String raw) {
+        if (raw == null || raw.isBlank()) {
+            throw new IllegalArgumentException("strategyKey is required");
+        }
+        try {
+            return StrategyKey.valueOf(raw.toUpperCase());
+        } catch (IllegalArgumentException e) {
+            throw new IllegalArgumentException("Unknown strategyKey: " + raw);
+        }
+    }
+
     @PostMapping("/algo/start")
     public ResponseEntity<String> startAlgo(@RequestBody AlgoStartRequest req,
                                              Principal principal) {
 
         String startedBy = principal != null ? principal.getName() : "unknown";
+
+        StrategyKey strategyKey;
+        try {
+            strategyKey = resolveStrategyKey(req.getStrategyKey());
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(e.getMessage());
+        }
+
+        TradeDirection direction = (req.getTradeDirection() != null && !req.getTradeDirection().isBlank())
+                ? TradeDirection.valueOf(req.getTradeDirection().toUpperCase())
+                : TradeDirection.BUY;
 
         var platformUserOpt = userRegistry.findByUsername(startedBy);
         if (platformUserOpt.isPresent()) {
@@ -65,14 +88,17 @@ public class AlgoController {
             }
         }
 
-        if (engineRegistry.hasActiveEngine(startedBy)) {
+        if (engineRegistry.hasActiveEngine(startedBy, strategyKey)) {
             return ResponseEntity.status(HttpStatus.CONFLICT)
-                    .body("You already have an active session. Stop it first before starting a new one.");
+                    .body("You already have an active " + strategyKey + " session. Stop it first before starting a new one.");
         }
 
         int lots = Math.max(req.getLotQuantity(), 1);
 
         TradingConfig config = TradingConfig.builder()
+                .strategyKey(strategyKey)
+                .tradeDirection(direction)
+                .reversalEnabled(req.isReversalEnabled())
                 .futuresInstrument(req.getFutureSymbol())
                 .ceInstrument(req.getCeSymbol())
                 .peInstrument(req.getPeSymbol())
@@ -93,8 +119,8 @@ public class AlgoController {
                 .tradeMode(req.isPaperTrade() ? TradeMode.PAPER : TradeMode.LIVE)
                 .build();
 
-        log.info("[{}] Config: {} lot(s) = {} qty, mode={}", startedBy, lots,
-                config.getTotalQuantity(), config.getTradeMode());
+        log.info("[{}][{}] Config: {} lot(s) = {} qty, mode={}, direction={}", startedBy, strategyKey, lots,
+                config.getTotalQuantity(), config.getTradeMode(), direction);
 
         Map<Long, String> instruments = new LinkedHashMap<>();
 
@@ -135,22 +161,28 @@ public class AlgoController {
                         .build()
         );
 
-        UserTradingEngine engine = engineRegistry.startEngine(user, config, instruments, startedBy);
+        TradingEngine engine = engineRegistry.startEngine(user, strategyKey, config, instruments, startedBy);
         TradeSession session = engine.getSession();
-        log.info("[{}] Engine started. sessionId={}", startedBy, session.getSessionId());
+        log.info("[{}][{}] Engine started. sessionId={}", startedBy, strategyKey, session.getSessionId());
 
         return ResponseEntity.ok(session.getSessionId());
     }
 
     @PostMapping("/algo/stop")
-    public ResponseEntity<String> stopAlgo(Principal principal) {
+    public ResponseEntity<String> stopAlgo(@RequestParam("strategy") String strategy, Principal principal) {
         String username = principal != null ? principal.getName() : "unknown";
+        StrategyKey strategyKey;
+        try {
+            strategyKey = resolveStrategyKey(strategy);
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(e.getMessage());
+        }
 
-        Optional<TradeSession> result = engineRegistry.stopEngine(username);
+        Optional<TradeSession> result = engineRegistry.stopEngine(username, strategyKey);
 
-        // Unsubscribe global ticker once no active engines remain
+        // Unsubscribe global ticker once no active engines remain across any user/strategy
         boolean anyStillActive = engineRegistry.getAllEngines().values().stream()
-                .anyMatch(e -> e.isActive());
+                .anyMatch(TradingEngine::isActive);
         if (!anyStillActive) {
             tickerService.unsubscribeAll();
             log.info("[{}] All engines stopped — global KiteTicker unsubscribed", username);
@@ -158,22 +190,36 @@ public class AlgoController {
 
         return result
                 .map(s -> ResponseEntity.ok("Stopped: " + s.getSessionId()))
-                .orElse(ResponseEntity.badRequest().body("No active session found for user: " + username));
+                .orElse(ResponseEntity.badRequest().body("No active " + strategyKey + " session found for user: " + username));
     }
 
     @PostMapping("/algo/reset")
-    public ResponseEntity<String> resetPnl(Principal principal) {
+    public ResponseEntity<String> resetPnl(@RequestParam("strategy") String strategy, Principal principal) {
         String username = principal != null ? principal.getName() : "unknown";
-        engineRegistry.clearStoppedEngine(username);
+        StrategyKey strategyKey;
+        try {
+            strategyKey = resolveStrategyKey(strategy);
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(e.getMessage());
+        }
+        engineRegistry.clearStoppedEngine(username, strategyKey);
         return ResponseEntity.ok("P&L reset");
     }
 
     @PostMapping("/algo/update-params")
     public ResponseEntity<String> updateParams(@RequestBody AlgoUpdateParamsRequest req,
+                                               @RequestParam("strategy") String strategy,
                                                Principal principal) {
         String username = principal != null ? principal.getName() : "unknown";
+        StrategyKey strategyKey;
+        try {
+            strategyKey = resolveStrategyKey(strategy);
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(e.getMessage());
+        }
 
-        return engineRegistry.getEngine(username)
+        StrategyKey finalStrategyKey = strategyKey;
+        return engineRegistry.getEngine(username, strategyKey)
                 .map(engine -> {
                     try {
                         engine.updateParams(req.getTargetPrice(), req.getStopLoss(),
@@ -183,14 +229,21 @@ public class AlgoController {
                         return ResponseEntity.badRequest().body(e.getMessage());
                     }
                 })
-                .orElse(ResponseEntity.badRequest().body("No active session found"));
+                .orElse(ResponseEntity.badRequest().body("No active " + finalStrategyKey + " session found"));
     }
 
     @GetMapping("/algo/status")
-    public ResponseEntity<AlgoStatusResponse> getStatus(Principal principal) {
+    public ResponseEntity<AlgoStatusResponse> getStatus(@RequestParam("strategy") String strategy,
+                                                         Principal principal) {
         String username = principal != null ? principal.getName() : "unknown";
+        StrategyKey strategyKey;
+        try {
+            strategyKey = resolveStrategyKey(strategy);
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().build();
+        }
 
-        return (ResponseEntity<AlgoStatusResponse>) engineRegistry.getEngine(username)
+        return (ResponseEntity<AlgoStatusResponse>) engineRegistry.getEngine(username, strategyKey)
                 .map(engine -> {
                     AlgoStatusResponse resp = engine.buildStatusResponse();
                     return resp != null
@@ -198,6 +251,17 @@ public class AlgoController {
                             : ResponseEntity.<AlgoStatusResponse>noContent().build();
                 })
                 .orElse(ResponseEntity.<AlgoStatusResponse>noContent().build());
+    }
+
+    /** Returns status for every strategy the current user has an engine for (active or recently stopped). */
+    @GetMapping("/algo/status/all")
+    public ResponseEntity<List<AlgoStatusResponse>> getAllStatus(Principal principal) {
+        String username = principal != null ? principal.getName() : "unknown";
+        List<AlgoStatusResponse> statuses = engineRegistry.getAllForUser(username).stream()
+                .map(TradingEngine::buildStatusResponse)
+                .filter(java.util.Objects::nonNull)
+                .collect(Collectors.toList());
+        return ResponseEntity.ok(statuses);
     }
 
     @GetMapping("/algo/sessions")
@@ -208,9 +272,14 @@ public class AlgoController {
 
     @PostMapping("/algo/admin/stop/{username}")
     @PreAuthorize("hasRole('GNANESH')")
-    public ResponseEntity<String> adminStop(@PathVariable String username) {
-        engineRegistry.forceStopEngine(username);
-        return ResponseEntity.ok("Force-stopped session for: " + username);
+    public ResponseEntity<String> adminStop(@PathVariable String username,
+                                             @RequestParam(value = "strategy", required = false) String strategy) {
+        if (strategy != null && !strategy.isBlank()) {
+            engineRegistry.forceStopEngine(username, resolveStrategyKey(strategy));
+        } else {
+            engineRegistry.forceStopAllForUser(username);
+        }
+        return ResponseEntity.ok("Force-stopped session(s) for: " + username);
     }
 
     /**

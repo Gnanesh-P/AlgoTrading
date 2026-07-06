@@ -79,7 +79,8 @@ public class AlgoSchedulerService {
      * Used by both the morning cron and the on-demand API endpoint.
      */
     public String triggerAutoStart(String targetUsername) {
-        if (engineRegistry.hasActiveEngine(targetUsername)) {
+        StrategyKey strategyKey = StrategyKey.NIFTY_SCALP;
+        if (engineRegistry.hasActiveEngine(targetUsername, strategyKey)) {
             return "SKIPPED: [" + targetUsername + "] already has an active session";
         }
 
@@ -112,6 +113,7 @@ public class AlgoSchedulerService {
                 .trailingProfit(trailingProfit)
                 .squareOffEod(squareOffEod)
                 .tradeMode(paperTrade ? TradeMode.PAPER : TradeMode.LIVE)
+                .strategyKey(strategyKey)
                 .build();
 
         // Resolve futures token for global ticker subscription
@@ -137,7 +139,7 @@ public class AlgoSchedulerService {
         }
 
         try {
-            engineRegistry.startEngine(user, config, instruments, targetUsername);
+            engineRegistry.startEngine(user, strategyKey, config, instruments, targetUsername);
             String msg = String.format(
                     "STARTED: [%s] futures=%s lots=%d SL=%.0f target=%.0f mode=%s",
                     targetUsername, futuresSymbol, lots, stopLoss, targetProfit,

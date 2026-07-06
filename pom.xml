@@ -108,7 +108,7 @@
     </dependencies>
 
     <build>
-        <finalName>algo-trading-proxy</finalName>
+        <finalName>algo-trading-proxy-multiple</finalName>
         <plugins>
             <plugin>
                 <groupId>org.springframework.boot</groupId>

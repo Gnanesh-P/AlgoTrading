@@ -4,6 +4,8 @@ import lombok.Data;
 
 @Data
 public class AlgoStartRequest {
+    private String  strategyKey;          // NIFTY_SCALP | BANKNIFTY_SCALP | NIFTY_BREAKOUT
+    private String  tradeDirection;        // BUY | SELL (default BUY if omitted)
     private String  futureSymbol;
     private long    futureToken;
     private String  ceSymbol;
@@ -15,6 +17,7 @@ public class AlgoStartRequest {
     private double  stopLoss;
     private String  entryStartTime;
     private int     maxReversals;
+    private boolean reversalEnabled;       // Strategy 3 (breakout) only
     private boolean paperTrade;
     private String  strikeMode;
     private String  expiryType;

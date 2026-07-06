@@ -22,7 +22,14 @@ import java.util.Locale;
 public class OptionInstrumentService {
 
     private static final int NIFTY_STRIKE_GAP = 50;
+    private static final int BANKNIFTY_STRIKE_GAP = 100;
     private static final int STRIKE_RANGE = 400;
+
+    /** Strike step for the given futures/index instrument symbol (50 for NIFTY, 100 for BANKNIFTY). */
+    public int strikeStepFor(String instrument) {
+        return (instrument != null && instrument.toUpperCase().contains("BANKNIFTY"))
+                ? BANKNIFTY_STRIKE_GAP : NIFTY_STRIKE_GAP;
+    }
 
     private static final Set<LocalDate> NSE_HOLIDAYS = Set.of(
         LocalDate.of(2026, 1, 26),
@@ -53,23 +60,35 @@ public class OptionInstrumentService {
     );
 
     /**
-     * First OTM CE strike: always strictly ABOVE niftyPrice.
-     * e.g. 24330 → 24350, 24300 → 24350 (not ATM)
+     * First OTM CE strike: always strictly ABOVE price.
+     * e.g. (step=50) 24330 → 24350, 24300 → 24350 (not ATM)
      */
-    public int computeCeStrike(double niftyPrice) {
-        return (int) (Math.floor(niftyPrice / NIFTY_STRIKE_GAP) * NIFTY_STRIKE_GAP) + NIFTY_STRIKE_GAP;
+    public int computeCeStrike(double price) {
+        return computeCeStrike(price, NIFTY_STRIKE_GAP);
+    }
+
+    public int computeCeStrike(double price, int strikeStep) {
+        return (int) (Math.floor(price / strikeStep) * strikeStep) + strikeStep;
     }
 
     /**
-     * First OTM PE strike: always strictly at or below niftyPrice (ATM-aligned floor).
-     * e.g. 24330 → 24300, 24300 → 24300
+     * First OTM PE strike: always strictly at or below price (ATM-aligned floor).
+     * e.g. (step=50) 24330 → 24300, 24300 → 24300
      */
-    public int computePeStrike(double niftyPrice) {
-        return (int) (Math.floor(niftyPrice / NIFTY_STRIKE_GAP) * NIFTY_STRIKE_GAP);
+    public int computePeStrike(double price) {
+        return computePeStrike(price, NIFTY_STRIKE_GAP);
     }
 
-    public int computeAtmStrike(double niftyPrice) {
-        return (int) (Math.round(niftyPrice / NIFTY_STRIKE_GAP) * NIFTY_STRIKE_GAP);
+    public int computePeStrike(double price, int strikeStep) {
+        return (int) (Math.floor(price / strikeStep) * strikeStep);
+    }
+
+    public int computeAtmStrike(double price) {
+        return computeAtmStrike(price, NIFTY_STRIKE_GAP);
+    }
+
+    public int computeAtmStrike(double price, int strikeStep) {
+        return (int) (Math.round(price / strikeStep) * strikeStep);
     }
 
     public String buildInstrumentKey(int strikePrice, String optionType, ExpiryType expiryType) {
@@ -89,8 +108,11 @@ public class OptionInstrumentService {
             String expiryLabel = (isNextWeek ? "Next Week" : "Current Week")
                     + " (" + autoExpiry.format(DateTimeFormatter.ofPattern("dd MMM", Locale.ENGLISH)) + ")";
 
-            int ceStrike = computeCeStrike(currentNiftyPrice);
-            int peStrike = computePeStrike(currentNiftyPrice);
+            int strikeStep = strikeStepFor(config.getFuturesInstrument());
+            String indexPrefix = strikeStep == BANKNIFTY_STRIKE_GAP ? "BANKNIFTY" : "NIFTY";
+
+            int ceStrike = computeCeStrike(currentNiftyPrice, strikeStep);
+            int peStrike = computePeStrike(currentNiftyPrice, strikeStep);
 
             // Store expiry date — engine will resolve the real tradingsymbol from Kite cache
             // using attribute lookup (expiry + strike + type) to avoid symbol name format issues.
@@ -100,10 +122,10 @@ public class OptionInstrumentService {
             session.setLockedExpiryLabel(expiryLabel);
             // Placeholder names shown in UI until engine resolves real ones from cache
             String dateKey = autoExpiry.format(DateTimeFormatter.ofPattern("yyddMMM")).toUpperCase();
-            session.setLockedCeInstrument("NIFTY" + dateKey + ceStrike + "CE");
-            session.setLockedPeInstrument("NIFTY" + dateKey + peStrike + "PE");
-            log.info("AUTO_ATM: NIFTY={} → CE strike={} PE strike={} expiry={} ({})",
-                    currentNiftyPrice, ceStrike, peStrike, autoExpiry, expiryLabel);
+            session.setLockedCeInstrument(indexPrefix + dateKey + ceStrike + "CE");
+            session.setLockedPeInstrument(indexPrefix + dateKey + peStrike + "PE");
+            log.info("AUTO_ATM: {}={} → CE strike={} PE strike={} expiry={} ({})",
+                    indexPrefix, currentNiftyPrice, ceStrike, peStrike, autoExpiry, expiryLabel);
         } else {
             session.setLockedCeStrike(config.getCeStrikePrice());
             session.setLockedPeStrike(config.getPeStrikePrice());

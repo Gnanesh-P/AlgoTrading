@@ -1,14 +1,16 @@
-let token       = localStorage.getItem('jwtToken') || '';
-let wsClient    = null;
-let pricePoller = null;
+let token        = localStorage.getItem('jwtToken') || '';
+let wsClient     = null;
+let pricePoller  = null;
 let statusPoller = null;
-let currentSession = null;
-let savedConfig    = null;
-let pnlFrozen      = false;
 
-let futureToken = 0;
-let ceToken     = 0;
-let peToken     = 0;
+const STRATEGIES = [
+  { key: 'NIFTY_SCALP',     title: 'NIFTY Scalping',     subtitle: '1-Min Scalping · NIFTY',            icon: '⚡', index: 'NIFTY',     manualStrike: true,  breakout: false },
+  { key: 'BANKNIFTY_SCALP', title: 'Bank Nifty Scalping', subtitle: '1-Min Scalping · BANKNIFTY',        icon: '🏦', index: 'BANKNIFTY', manualStrike: true,  breakout: false },
+  { key: 'NIFTY_BREAKOUT',  title: 'NIFTY Breakout',      subtitle: '5-Min Breakout · NIFTY',            icon: '🚀', index: 'NIFTY',     manualStrike: true,  breakout: true  },
+];
+
+// Per-key runtime state: { currentSession, savedConfig, pnlFrozen }
+const cardState = {};
 
 function isAdmin() {
   return localStorage.getItem('userRole') === 'GNANESH';
@@ -22,7 +24,6 @@ window.onload = () => {
     return;
   }
 
-  // Always canonicalise URL to /algo (handles direct visits to / or /index.html)
   const path = window.location.pathname;
   if (path === '/' || path === '/index.html') {
     window.location.replace('/algo' + window.location.search);
@@ -32,8 +33,12 @@ window.onload = () => {
   const params = new URLSearchParams(window.location.search);
   if (params.get('kite') === 'connected') {
     window.history.replaceState({}, document.title, '/algo');
-    showMsg('config-msg', '✅ Kite connected successfully!', 'success');
+    showToast('✅ Kite connected successfully!', 'success');
     refreshKiteStatus();
+  } else if (params.get('kite') === 'error') {
+    window.history.replaceState({}, document.title, '/algo');
+    const msg = params.get('message') || 'Kite authentication failed';
+    showToast('❌ ' + msg, 'error', 9000);
   }
 
   init();
@@ -42,23 +47,70 @@ window.onload = () => {
 };
 
 function init() {
+  const grid = document.getElementById('cards-grid');
+  grid.innerHTML = STRATEGIES.map(buildCardHtml).join('');
+
+  STRATEGIES.forEach(s => {
+    cardState[s.key] = { currentSession: null, savedConfig: null, pnlFrozen: false };
+  });
+
   applyRoleVisibility();
   connectWebSocket();
   refreshKiteStatus();
   startPricePoller();
-  loadFuturesDropdown();
+
+  STRATEGIES.forEach(s => {
+    const key = s.key;
+    loadFuturesDropdown(key);
+    const expiryEl = document.getElementById('cfg-expiry-' + key);
+    if (expiryEl) expiryEl.addEventListener('change', () => loadOptionChain(key));
+    populateStartTimes(key);
+    const lotQtyEl = document.getElementById('cfg-lot-qty-' + key);
+    if (lotQtyEl) {
+      lotQtyEl.addEventListener('input', () => updateQtyDisplay(key));
+      updateQtyDisplay(key);
+    }
+    if (s.manualStrike) onStrikeModeChange(key);
+    setStrategyButtonsLoading(key, true);
+  });
+
+  setInterval(() => STRATEGIES.forEach(s => populateStartTimes(s.key)), 60000);
+
   startStatusPoller();
-  document.getElementById('cfg-expiry').addEventListener('change', loadOptionChain);
-  populateStartTimes();
-  setInterval(populateStartTimes, 60000);
-  const lotQtyEl = document.getElementById('cfg-lot-qty');
-  if (lotQtyEl) {
-    lotQtyEl.addEventListener('input', updateQtyDisplay);
-    updateQtyDisplay();
-  }
-  onStrikeModeChange();
-  setStrategyButtonsLoading(true);
-  fetchAndRenderStatus();
+  fetchAndRenderStatusAll();
+
+  refreshQuotesBar();
+  setInterval(refreshQuotesBar, 60000);
+}
+
+async function refreshQuotesBar() {
+  const bar = document.getElementById('quotes-bar');
+  if (!bar) return;
+
+  let chips = '';
+  try {
+    const quotes = await get('/api/quotes');
+    chips += quotes.map(q => `
+      <span class="quote-chip">
+        <span class="q-name">${escapeHtml(q.symbol)}</span>
+        <span>${escapeHtml(q.price)}</span>
+        <span class="${q.up ? 'q-up' : 'q-down'}">${escapeHtml(q.change)}</span>
+      </span>`).join('');
+  } catch (_) { /* quotes are best-effort */ }
+
+  try {
+    const funds = await get('/api/kite/funds');
+    if (funds && !funds.error) {
+      const marginVal = funds.availableMargin ?? funds.net ?? funds.liveBalance ?? funds.availableCash;
+      chips += `
+      <span class="quote-chip">
+        <span class="q-name">💰 Available Margin</span>
+        <span>₹${escapeHtml(typeof marginVal === 'number' ? marginVal.toLocaleString('en-IN', {maximumFractionDigits: 2}) : (marginVal ?? 'N/A'))}</span>
+      </span>`;
+    }
+  } catch (_) { /* funds require Kite connection — best-effort */ }
+
+  if (chips) bar.innerHTML = chips;
 }
 
 function getMaxLotSize() {
@@ -74,42 +126,52 @@ function applyRoleVisibility() {
     el.style.display = admin ? 'none' : '';
   });
 
-  // Enforce lot input cap based on user's allowed max
-  const lotEl = document.getElementById('cfg-lot-qty');
-  if (lotEl) {
-    const max = getMaxLotSize();
-    lotEl.max = max;
-    const hint = lotEl.closest('.form-group')?.querySelector('span');
-    if (hint && !admin) {
-      hint.textContent = `Max ${max} lot${max !== 1 ? 's' : ''} allowed for your account`;
+  STRATEGIES.forEach(s => {
+    const lotEl = document.getElementById('cfg-lot-qty-' + s.key);
+    if (lotEl) {
+      const max = getMaxLotSize();
+      lotEl.max = max;
+      const hint = lotEl.closest('.form-group')?.querySelector('span');
+      if (hint && !admin) {
+        hint.textContent = `Max ${max} lot${max !== 1 ? 's' : ''} allowed for your account`;
+      }
     }
-  }
+  });
 }
 
-function updateQtyDisplay() {
-  const lots  = parseInt(document.getElementById('cfg-lot-qty')?.value) || 1;
-  const total = document.getElementById('qty-total');
-  if (total) total.textContent = (lots * 65).toLocaleString('en-IN');
-  const totalUser = document.getElementById('qty-total-user');
-  if (totalUser) totalUser.textContent = (lots * 65).toLocaleString('en-IN');
+function updateQtyDisplay(key) {
+  const lots  = parseInt(document.getElementById('cfg-lot-qty-' + key)?.value) || 1;
+  const strat = STRATEGIES.find(s => s.key === key);
+  const lotSize = strat && strat.index === 'BANKNIFTY' ? 30 : 65;
+  const total = document.getElementById('qty-total-' + key);
+  if (total) total.textContent = (lots * lotSize).toLocaleString('en-IN');
+  const totalUser = document.getElementById('qty-total-user-' + key);
+  if (totalUser) totalUser.textContent = (lots * lotSize).toLocaleString('en-IN');
 }
 
-function populateStartTimes() {
-  const sel     = document.getElementById('cfg-start-time');
+function populateStartTimes(key) {
+  const sel = document.getElementById('cfg-start-time-' + key);
+  if (!sel) return;
   const prevVal = sel.value;
+  const strat = STRATEGIES.find(x => x.key === key) || {};
 
   const nowIst  = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
   const nowMins = nowIst.getHours() * 60 + nowIst.getMinutes();
 
+  // Scalping cards (NIFTY/Bank Nifty): full session window 9:15 to 3:27 PM.
+  // Breakout card: same window but restricted to 5-min-aligned slots (9:15, 9:20, 9:25 ...)
+  // since the strategy's candles are 5 minutes wide and the first two candles after the
+  // selected start time form the breakout reference (e.g. start=9:15 → candle1=9:15-9:20,
+  // candle2=9:20-9:25, breakout checks begin from the candle closing at/after 9:25).
   const START_H = 9, START_M = 15;
-  const END_H   = isAdmin() ? 15 : 9;
-  const END_M   = isAdmin() ? 27 : 20;
+  const END_H   = 15, END_M = 27;
+  const STEP    = strat.breakout ? 5 : 1;
 
   const startTotal = START_H * 60 + START_M;
   const endTotal   = END_H   * 60 + END_M;
 
   let html = '';
-  for (let t = startTotal; t <= endTotal; t++) {
+  for (let t = startTotal; t <= endTotal; t += STEP) {
     const h   = Math.floor(t / 60);
     const m   = t % 60;
     const hh  = String(h).padStart(2, '0');
@@ -130,7 +192,6 @@ function populateStartTimes() {
     if (firstValid) sel.value = firstValid.value;
   }
 }
-
 
 function logout() {
   token = '';
@@ -165,7 +226,7 @@ async function connectKite() {
   try {
     const res = await get('/api/kite/login-url');
     window.open(res.loginUrl, '_blank');
-    showMsg('config-msg', '⏳ Complete Kite login in the new tab. This page will update automatically.', 'info');
+    showToast('⏳ Complete Kite login in the new tab. This page will update automatically.', 'info');
     let attempts = 0;
     const poll = setInterval(async () => {
       attempts++;
@@ -174,15 +235,14 @@ async function connectKite() {
         if (status.connected) {
           clearInterval(poll);
           await refreshKiteStatus();
-          loadFuturesDropdown();
-          loadOptionChain();
-          showMsg('config-msg', '✅ Kite connected! Instruments loading...', 'success');
+          refreshAllInstruments();
+          showToast('✅ Kite connected! Instruments loading...', 'success');
         }
       } catch (_) {}
       if (attempts >= 60) clearInterval(poll);
     }, 3000);
   } catch (e) {
-    showMsg('config-msg', '❌ Failed to get Kite login URL', 'error');
+    showToast('❌ Failed to get Kite login URL', 'error');
   }
 }
 
@@ -192,12 +252,11 @@ async function setManualToken() {
   await withBtnLoad('btn-set-token', '⏳ Saving...', async () => {
   try {
     await post('/api/kite/my-access-token', { accessToken: t });
-    showMsg('config-msg', '✅ Kite token saved — connected!', 'success');
+    showToast('✅ Kite token saved — connected!', 'success');
     await refreshKiteStatus();
-    loadFuturesDropdown();
-    loadOptionChain();
+    refreshAllInstruments();
   } catch (e) {
-    showMsg('config-msg', '❌ Failed to set token: ' + e.message, 'error');
+    showToast('❌ Failed to set token: ' + e.message, 'error');
   }
   });
 }
@@ -226,17 +285,23 @@ async function disconnectKite() {
   if (!confirm('Clear saved Kite token? You will need to set a new token tomorrow morning.')) return;
   try {
     await post('/api/kite/disconnect', {});
-    showMsg('config-msg', '🔌 Kite disconnected. Set a new token to reconnect.', 'info');
+    showToast('🔌 Kite disconnected. Set a new token to reconnect.', 'info');
     await refreshKiteStatus();
   } catch (e) {
-    showMsg('config-msg', '❌ ' + (e.message || 'Disconnect failed'), 'error');
+    showToast('❌ ' + (e.message || 'Disconnect failed'), 'error');
   }
 }
 
-async function loadFuturesDropdown() {
+function refreshAllInstruments() {
+  STRATEGIES.forEach(s => loadFuturesDropdown(s.key));
+}
+
+async function loadFuturesDropdown(key) {
+  const strat = STRATEGIES.find(s => s.key === key);
   try {
-    const instruments = await get('/api/kite/instruments/futures');
-    const sel = document.getElementById('cfg-futures');
+    const instruments = await get('/api/kite/instruments/futures?index=' + strat.index);
+    const sel = document.getElementById('cfg-futures-' + key);
+    if (!sel) return;
     if (instruments && instruments.length > 0) {
       sel.innerHTML = instruments.map(i => {
         const label = i.expiry ? `exp: ${i.expiry}` : 'spot';
@@ -245,34 +310,41 @@ async function loadFuturesDropdown() {
         </option>`;
       }).join('');
 
-      if (savedConfig && savedConfig.futureSymbol) {
-        const match = sel.querySelector(`option[value="${savedConfig.futureSymbol}"]`);
-        if (match) sel.value = savedConfig.futureSymbol;
+      const saved = cardState[key].savedConfig;
+      if (saved && saved.futureSymbol) {
+        const match = sel.querySelector(`option[value="${saved.futureSymbol}"]`);
+        if (match) sel.value = saved.futureSymbol;
       }
 
-      onFuturesChange();
+      onFuturesChange(key);
     }
   } catch (_) {}
 }
 
-async function loadOptionChain() {
-  const futures    = document.getElementById('cfg-futures').value;
-  const expiry     = document.getElementById('cfg-expiry').value;
-  const niftyPrice = parseFloat(document.getElementById('price-futures').textContent) || undefined;
+async function loadOptionChain(key) {
+  const strat   = STRATEGIES.find(s => s.key === key);
+  const futures = document.getElementById('cfg-futures-' + key)?.value;
+  const expiry  = document.getElementById('cfg-expiry-' + key)?.value || 'CURRENT_WEEK';
+  const price   = parseFloat(document.getElementById('price-futures-' + key)?.textContent) || undefined;
+  if (!futures) return;
 
   try {
-    let url = `/api/kite/instruments/options?expiryType=${expiry}&futuresSymbol=${futures}`;
-    if (niftyPrice && niftyPrice > 0) url += `&niftyPrice=${niftyPrice}`;
+    let url = `/api/kite/instruments/options?expiryType=${expiry}&futuresSymbol=${futures}&index=${strat.index}`;
+    if (price && price > 0) url += `&niftyPrice=${price}`;
     const chain = await get(url);
-    populateStrikeDropdowns(chain);
+    populateStrikeDropdowns(key, chain);
   } catch (e) {
     console.warn('Option chain load error:', e);
   }
 }
 
-function populateStrikeDropdowns(chain) {
+function populateStrikeDropdowns(key, chain) {
   if (!chain || !chain.strikes) return;
   const strikes = chain.strikes;
+
+  const ceSel = document.getElementById('cfg-ce-strike-' + key);
+  const peSel = document.getElementById('cfg-pe-strike-' + key);
+  if (!ceSel || !peSel) return;
 
   const ceOpts = strikes
     .filter(s => s.ceInstrument)
@@ -290,59 +362,59 @@ function populateStrikeDropdowns(chain) {
       </option>`
     ).join('');
 
-  document.getElementById('cfg-ce-strike').innerHTML = ceOpts || '<option>No data</option>';
-  document.getElementById('cfg-pe-strike').innerHTML = peOpts || '<option>No data</option>';
+  ceSel.innerHTML = ceOpts || '<option>No data</option>';
+  peSel.innerHTML = peOpts || '<option>No data</option>';
 }
 
-function onStrikeModeChange() {
-  const mode = document.getElementById('cfg-strike-mode').value;
-  document.getElementById('manual-strike-section').style.display =
-    mode === 'MANUAL' ? 'block' : 'none';
-  const expiryEl = document.getElementById('cfg-expiry');
+function onStrikeModeChange(key) {
+  const modeEl = document.getElementById('cfg-strike-mode-' + key);
+  if (!modeEl) return;
+  const mode = modeEl.value;
+  const manualSection = document.getElementById('manual-strike-section-' + key);
+  if (manualSection) manualSection.style.display = mode === 'MANUAL' ? 'block' : 'none';
+  const expiryEl = document.getElementById('cfg-expiry-' + key);
   if (expiryEl) {
     expiryEl.disabled = mode === 'AUTO_ATM';
     expiryEl.style.opacity = mode === 'AUTO_ATM' ? '0.4' : '1';
   }
 }
 
-function toggleSlEnabled() {
-  const enabled = document.getElementById('sl-enabled').checked;
-  const slInput = document.getElementById('cfg-sl');
+function toggleSlEnabled(key) {
+  const enabled = document.getElementById('sl-enabled-' + key).checked;
+  const slInput = document.getElementById('cfg-sl-' + key);
   slInput.disabled = !enabled;
   slInput.style.opacity = enabled ? '1' : '0.5';
 }
 
-function toggleLiveSlEnabled() {
-  const enabled = document.getElementById('live-sl-enabled').checked;
-  const slInput = document.getElementById('live-sl');
+function toggleLiveSlEnabled(key) {
+  const enabled = document.getElementById('live-sl-enabled-' + key).checked;
+  const slInput = document.getElementById('live-sl-' + key);
   slInput.disabled = !enabled;
   slInput.style.opacity = enabled ? '1' : '0.5';
 }
 
-function onFuturesChange() {
-  const sel = document.getElementById('cfg-futures');
-  const opt = sel.selectedOptions[0];
-  futureToken = opt ? parseInt(opt.dataset.token || 0) : 0;
-  loadOptionChain();
+function onFuturesChange(key) {
+  const sel = document.getElementById('cfg-futures-' + key);
+  if (!sel) return;
+  loadOptionChain(key);
 }
 
-async function saveConfig() {
-  const strikeMode  = document.getElementById('cfg-strike-mode').value;
-  const ceSel       = document.getElementById('cfg-ce-strike');
-  const peSel       = document.getElementById('cfg-pe-strike');
-  const futSel      = document.getElementById('cfg-futures');
-  const expiry      = document.getElementById('cfg-expiry').value;
+async function saveConfig(key) {
+  const strat       = STRATEGIES.find(s => s.key === key);
+  const strikeModeEl = document.getElementById('cfg-strike-mode-' + key);
+  const strikeMode  = strat.manualStrike ? strikeModeEl.value : 'AUTO_ATM';
+  const ceSel       = document.getElementById('cfg-ce-strike-' + key);
+  const peSel       = document.getElementById('cfg-pe-strike-' + key);
+  const futSel      = document.getElementById('cfg-futures-' + key);
+  const expiry      = document.getElementById('cfg-expiry-' + key).value;
+  const direction   = document.getElementById('cfg-direction-' + key).value;
 
-  const startTimeSel = document.getElementById('cfg-start-time');
-  const [selH, selM] = startTimeSel.value.split(':').map(Number);
-  const now = new Date();
-  const nowMins = now.getHours() * 60 + now.getMinutes();
+  const startTimeSel = document.getElementById('cfg-start-time-' + key);
 
   const futOpt = futSel.selectedOptions[0];
-  futureToken = futOpt ? parseInt(futOpt.dataset.token || 0) : 0;
+  const futureToken = futOpt ? parseInt(futOpt.dataset.token || 0) : 0;
 
-  let ceSymbol = '', peSymbol = '';
-  ceToken = 0; peToken = 0;
+  let ceSymbol = '', peSymbol = '', ceToken = 0, peToken = 0;
 
   if (strikeMode === 'MANUAL') {
     const ceOpt = ceSel.selectedOptions[0];
@@ -353,24 +425,27 @@ async function saveConfig() {
     peToken  = peOpt ? parseInt(peOpt.dataset.token || 0) : 0;
   }
 
-  const eodChecked = document.getElementById('cfg-eod').checked;
-  const slEnabled  = document.getElementById('sl-enabled').checked;
-  const lots = parseInt(document.getElementById('cfg-lot-qty').value) || 1;
+  const eodChecked = document.getElementById('cfg-eod-' + key).checked;
+  const slEnabled  = document.getElementById('sl-enabled-' + key).checked;
+  const lots = parseInt(document.getElementById('cfg-lot-qty-' + key).value) || 1;
 
   const maxLots = getMaxLotSize();
   if (lots > maxLots) {
-    showMsg('config-msg',
-      `❌ Lot quantity ${lots} exceeds your account limit of ${maxLots} lot${maxLots !== 1 ? 's' : ''}. Please reduce.`,
-      'error');
+    showToast(`❌ Lot quantity ${lots} exceeds your account limit of ${maxLots} lot${maxLots !== 1 ? 's' : ''}. Please reduce.`, 'error');
     return;
   }
 
-  // Normal users always get 10 max reversals (field is hidden)
   const maxReversals = isAdmin()
-    ? parseInt(document.getElementById('cfg-max-reversals').value)
+    ? parseInt(document.getElementById('cfg-max-reversals-' + key).value)
     : 10;
 
-  savedConfig = {
+  const reversalEnabled = strat.breakout
+    ? document.getElementById('cfg-reversal-enabled-' + key).checked
+    : true;
+
+  cardState[key].savedConfig = {
+    strategyKey:     key,
+    tradeDirection:  direction,
     futureSymbol:    futSel.value,
     futureToken,
     ceSymbol,  ceToken,
@@ -380,154 +455,173 @@ async function saveConfig() {
     strikeMode:      strikeMode === 'AUTO_ATM' ? 'AUTO' : 'MANUAL',
     lotQuantity:     lots,
     maxReversals,
-    targetPrice:     parseFloat(document.getElementById('cfg-target').value),
-    stopLoss:        slEnabled ? parseFloat(document.getElementById('cfg-sl').value) : 0,
-    trailingProfit:  parseFloat(document.getElementById('cfg-trailing').value) || 0,
+    reversalEnabled,
+    targetPrice:     parseFloat(document.getElementById('cfg-target-' + key).value),
+    stopLoss:        slEnabled ? parseFloat(document.getElementById('cfg-sl-' + key).value) : 0,
+    trailingProfit:  parseFloat(document.getElementById('cfg-trailing-' + key).value) || 0,
     squareOffEod:    eodChecked,
-    paperTrade:      document.getElementById('cfg-trade-mode').value === 'PAPER',
+    paperTrade:      document.getElementById('cfg-trade-mode-' + key).value === 'PAPER',
   };
 
-  updateFooter(savedConfig.paperTrade ? 'PAPER' : 'LIVE');
-  showMsg('config-msg', '✅ Configuration ready. Click Start Strategy to begin.', 'success');
+  showMsg('config-msg-' + key, '✅ Configuration ready. Click Start to begin.', 'success');
 }
 
-async function startStrategy() {
-  if (!savedConfig) await saveConfig();
+async function startStrategy(key) {
+  if (!cardState[key].savedConfig) await saveConfig(key);
 
-  pnlFrozen = false;
+  cardState[key].pnlFrozen = false;
 
-  document.getElementById('ce-label').textContent = 'CE';
-  document.getElementById('pe-label').textContent = 'PE';
-  document.getElementById('price-ce').textContent = '—';
-  document.getElementById('price-pe').textContent = '—';
-  document.getElementById('s-locked-ce').textContent = '—';
-  document.getElementById('s-locked-pe').textContent = '—';
-  const ccEl = document.getElementById('cfg-chip-ce');
-  const cpEl = document.getElementById('cfg-chip-pe');
-  if (ccEl) ccEl.textContent = 'CE —';
-  if (cpEl) cpEl.textContent = 'PE —';
+  const setText = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
+  setText('ce-label-' + key, 'CE');
+  setText('pe-label-' + key, 'PE');
+  setText('price-ce-' + key, '—');
+  setText('price-pe-' + key, '—');
+  setText('s-locked-ce-' + key, '—');
+  setText('s-locked-pe-' + key, '—');
+  setText('cfg-chip-ce-' + key, 'CE —');
+  setText('cfg-chip-pe-' + key, 'PE —');
 
-  setStrategyButtonsLoading(true);
+  setStrategyButtonsLoading(key, true);
   try {
-    await post('/algo/start', savedConfig);
-    showMsg('config-msg', '▶️ Strategy started!', 'success');
-    fetchAndRenderStatus();
+    await post('/algo/start', cardState[key].savedConfig);
+    showMsg('config-msg-' + key, '▶️ Strategy started!', 'success');
+    fetchAndRenderStatusAll();
   } catch (e) {
     const msg = e.message || 'Start failed';
-    const isConflict = msg.includes('409') || msg.toLowerCase().includes('already running');
-    showMsg('config-msg',
-      isConflict ? '⚠️ ' + msg : '❌ ' + msg,
-      isConflict ? 'info' : 'error');
-    fetchAndRenderStatus();
+    const isConflict = msg.includes('409') || msg.toLowerCase().includes('already running') || msg.toLowerCase().includes('already have an active');
+    showMsg('config-msg-' + key, isConflict ? '⚠️ ' + msg : '❌ ' + msg, isConflict ? 'info' : 'error');
+    fetchAndRenderStatusAll();
   }
 }
 
-async function stopStrategy() {
-  if (!confirm('Are you sure you want to stop the strategy? Any open position will be squared off.')) return;
-  setStrategyButtonsLoading(true);
+async function stopStrategy(key) {
+  if (!confirm('Are you sure you want to stop this strategy? Any open position will be squared off.')) return;
+  setStrategyButtonsLoading(key, true);
   try {
-    await post('/algo/stop', {});
-    fetchAndRenderStatus();
+    await post('/algo/stop?strategy=' + key, {});
+    fetchAndRenderStatusAll();
   } catch (e) {
-    showMsg('config-msg', '❌ ' + (e.message || 'Stop failed'), 'error');
-    fetchAndRenderStatus();
+    showMsg('config-msg-' + key, '❌ ' + (e.message || 'Stop failed'), 'error');
+    fetchAndRenderStatusAll();
   }
 }
 
-async function resetPnl() {
-  pnlFrozen = true;
+async function resetPnl(key) {
+  cardState[key].pnlFrozen = true;
   try {
-    await post('/algo/reset', {});
+    await post('/algo/reset?strategy=' + key, {});
   } catch (_) {}
-  setAmount('pnl-realized', 0);
-  setAmount('pnl-open', 0);
-  setAmount('pnl-total', 0, true);
-  document.getElementById('pnl-target').textContent = '₹—';
-  document.getElementById('pnl-sl').textContent     = '₹—';
-  const bar = document.getElementById('pnl-bar');
-  bar.style.width = '50%';
-  bar.style.background = 'var(--success)';
-  const tbody = document.getElementById('legs-body');
+  setAmount('pnl-realized-' + key, 0);
+  setAmount('pnl-open-' + key, 0);
+  setAmount('pnl-total-' + key, 0, true);
+  const tgt = document.getElementById('pnl-target-' + key);
+  const sl  = document.getElementById('pnl-sl-' + key);
+  if (tgt) tgt.textContent = '₹—';
+  if (sl)  sl.textContent  = '₹—';
+  const bar = document.getElementById('pnl-bar-' + key);
+  if (bar) { bar.style.width = '50%'; bar.style.background = 'var(--success)'; }
+  const tbody = document.getElementById('legs-body-' + key);
   if (tbody) tbody.innerHTML = '<tr><td colspan="8" class="empty-row">No trades yet</td></tr>';
-  currentSession = null;
+  cardState[key].currentSession = null;
 }
 
-async function updateLiveParams() {
-  const targetPrice   = parseFloat(document.getElementById('live-target').value);
-  const stopLoss      = parseFloat(document.getElementById('live-sl').value) || 0;
-  const slEnabled     = document.getElementById('live-sl-enabled').checked;
-  const trailingProfit = parseFloat(document.getElementById('live-trailing').value) || 0;
+async function updateLiveParams(key) {
+  const targetPrice    = parseFloat(document.getElementById('live-target-' + key).value);
+  const stopLoss       = parseFloat(document.getElementById('live-sl-' + key).value) || 0;
+  const slEnabled      = document.getElementById('live-sl-enabled-' + key).checked;
+  const trailingProfit = parseFloat(document.getElementById('live-trailing-' + key).value) || 0;
 
   if (isNaN(targetPrice) || targetPrice <= 0) {
-    showMsg('live-params-msg', '❌ Enter a valid target', 'error');
+    showMsg('live-params-msg-' + key, '❌ Enter a valid target', 'error');
     return;
   }
 
   try {
-    await post('/algo/update-params', { targetPrice, stopLoss, stopLossEnabled: slEnabled, trailingProfit });
-    showMsg('live-params-msg', '✅ Parameters updated', 'success');
-    fetchAndRenderStatus();
+    await post('/algo/update-params?strategy=' + key, { targetPrice, stopLoss, stopLossEnabled: slEnabled, trailingProfit });
+    showMsg('live-params-msg-' + key, '✅ Parameters updated', 'success');
+    fetchAndRenderStatusAll();
   } catch (e) {
-    showMsg('live-params-msg', '❌ ' + (e.message || 'Update failed'), 'error');
+    showMsg('live-params-msg-' + key, '❌ ' + (e.message || 'Update failed'), 'error');
   }
 }
 
 function startStatusPoller() {
   if (statusPoller) clearInterval(statusPoller);
-  statusPoller = setInterval(fetchAndRenderStatus, 3000);
+  statusPoller = setInterval(fetchAndRenderStatusAll, 3000);
 }
 
-async function fetchAndRenderStatus() {
+async function fetchAndRenderStatusAll() {
   if (!token) return;
   try {
-    const session = await get('/algo/status');
-    setStrategyButtonsLoading(false);
-    if (session && !pnlFrozen) {
-      currentSession = session;
-      renderSession(session);
-    } else if (!session) {
-      const startBtn = document.getElementById('btn-start');
-      const stopBtn  = document.getElementById('btn-stop');
-      if (startBtn) startBtn.disabled = false;
-      if (stopBtn)  stopBtn.disabled  = true;
-    }
+    const list = await get('/algo/status/all');
+    const byKey = {};
+    (list || []).forEach(s => { byKey[s.strategyKey] = s; });
+
+    let runningCount = 0;
+    STRATEGIES.forEach(strat => {
+      const key = strat.key;
+      setStrategyButtonsLoading(key, false);
+      const s = byKey[key];
+      if (s && !cardState[key].pnlFrozen) {
+        cardState[key].currentSession = s;
+        renderSession(key, s);
+        if (s.active) runningCount++;
+      } else if (!s) {
+        renderIdleCard(key);
+      }
+    });
+
+    const badge = document.getElementById('running-badge');
+    if (badge) badge.textContent = `${runningCount} / ${STRATEGIES.length} Running`;
   } catch (_) {
-    setStrategyButtonsLoading(false);
+    STRATEGIES.forEach(s => setStrategyButtonsLoading(s.key, false));
   }
 }
 
-function renderSession(s) {
+function renderIdleCard(key) {
+  const startBtn = document.getElementById('btn-start-' + key);
+  const stopBtn  = document.getElementById('btn-stop-' + key);
+  if (startBtn) startBtn.disabled = false;
+  if (stopBtn)  stopBtn.disabled  = true;
+}
+
+function renderSession(key, s) {
   if (!s) return;
 
   const status = s.status || 'STOPPED';
+  const card = document.getElementById('card-' + key);
 
-  const stratBadge = document.getElementById('strategy-badge');
-  stratBadge.textContent = 'Strategy: ' + status;
-  stratBadge.className   = 'badge badge-' + status.toLowerCase().replace(/_/g, '');
+  const stratBadge = document.getElementById('strategy-badge-' + key);
+  if (stratBadge) {
+    stratBadge.textContent = status;
+    stratBadge.className   = 'badge badge-' + status.toLowerCase().replace(/_/g, '');
+  }
 
-  const strip = document.getElementById('active-config-strip');
+  const strip = document.getElementById('active-config-strip-' + key);
   if (strip) {
     strip.classList.remove('hidden');
     const setText = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
-    setText('cfg-chip-future', s.futureSymbol || '—');
-    setText('cfg-chip-time',   s.entryStartTime ? '⏱ ' + s.entryStartTime : '—');
-    setText('cfg-chip-target', 'Target ₹' + fmt(s.targetPnL || 0));
-    setText('cfg-chip-sl',     'SL ₹'     + fmt(s.stopLossPoints || 0));
-    setText('cfg-chip-lots',   (s.lotQuantity || 1) + ' lot × 65 = ' + (s.totalQuantity || 65) + ' qty');
-    setText('cfg-chip-mode',   s.paperTrade ? '📄 Paper' : '🔴 Live');
-    setText('cfg-chip-strike', s.strikeMode === 'AUTO_ATM' ? '🎯 Auto ATM' : '✋ Manual Strike');
-    if (s.lockedCeInstrument) setText('cfg-chip-ce', 'CE: ' + s.lockedCeInstrument);
-    if (s.lockedPeInstrument) setText('cfg-chip-pe', 'PE: ' + s.lockedPeInstrument);
-    if (s.lockedExpiryLabel) setText('cfg-chip-expiry', s.lockedExpiryLabel);
-    else setText('cfg-chip-expiry', s.strikeMode === 'AUTO_ATM' ? 'Expiry: resolving...' : '—');
+    setText('cfg-chip-future-' + key, s.futureSymbol || '—');
+    setText('cfg-chip-dir-' + key,    s.tradeDirection === 'SELL' ? '📉 Sell' : '📈 Buy');
+    setText('cfg-chip-time-' + key,   s.entryStartTime ? '⏱ ' + s.entryStartTime : '—');
+    setText('cfg-chip-target-' + key, 'Target ₹' + fmt(s.targetPnL || 0));
+    setText('cfg-chip-sl-' + key,     'SL ₹'     + fmt(s.stopLossPoints || 0));
+    setText('cfg-chip-lots-' + key,   (s.lotQuantity || 1) + ' lot = ' + (s.totalQuantity || 0) + ' qty');
+    setText('cfg-chip-mode-' + key,   s.paperTrade ? '📄 Paper' : '🔴 Live');
+    setText('cfg-chip-strike-' + key, s.strikeMode === 'AUTO_ATM' ? '🎯 Auto ATM' : '✋ Manual Strike');
+    if (s.lockedCeInstrument) setText('cfg-chip-ce-' + key, 'CE: ' + s.lockedCeInstrument);
+    if (s.lockedPeInstrument) setText('cfg-chip-pe-' + key, 'PE: ' + s.lockedPeInstrument);
+    if (s.lockedExpiryLabel) setText('cfg-chip-expiry-' + key, s.lockedExpiryLabel);
+    else setText('cfg-chip-expiry-' + key, s.strikeMode === 'AUTO_ATM' ? 'Expiry: resolving...' : '—');
   }
 
-  const stateEl = document.getElementById('s-state');
-  stateEl.textContent = status;
-  stateEl.className   = 'status-value badge badge-' + status.toLowerCase().replace(/_/g, '');
+  const stateEl = document.getElementById('s-state-' + key);
+  if (stateEl) {
+    stateEl.textContent = status;
+    stateEl.className   = 'status-value badge badge-' + status.toLowerCase().replace(/_/g, '');
+  }
 
-  // Admin-only status fields
-  const startedByEl = document.getElementById('s-started-by');
+  const startedByEl = document.getElementById('s-started-by-' + key);
   if (startedByEl) {
     startedByEl.textContent = s.startedBy || '—';
     const me = localStorage.getItem('jwtUsername') || '';
@@ -535,39 +629,38 @@ function renderSession(s) {
       ? 'var(--warning, #f59e0b)' : 'inherit';
   }
 
-  document.getElementById('s-reversals').textContent =
-    (s.reversalCount || 0) + ' / ' + (s.maxReversals || 0);
+  const reversalsEl = document.getElementById('s-reversals-' + key);
+  if (reversalsEl) reversalsEl.textContent = (s.reversalCount || 0) + ' / ' + (s.maxReversals || 0);
 
-  const dirEl = document.getElementById('s-direction');
-  dirEl.textContent  = s.currentPosition || '—';
-  dirEl.style.color  = s.currentPosition === 'CE' ? '#58a6ff'
-                     : s.currentPosition === 'PE' ? '#f85149' : 'inherit';
+  const dirEl = document.getElementById('s-direction-' + key);
+  if (dirEl) {
+    dirEl.textContent  = s.currentPosition || '—';
+    dirEl.style.color  = s.currentPosition === 'CE' ? '#58a6ff'
+                       : s.currentPosition === 'PE' ? '#f85149' : 'inherit';
+  }
 
   const hist = s.history || [];
   const ceRows = hist.filter(r => r.position === 'CE');
   const peRows = hist.filter(r => r.position === 'PE');
   const ceSym  = ceRows.length ? ceRows[ceRows.length - 1].symbol : '—';
   const peSym  = peRows.length ? peRows[peRows.length - 1].symbol : '—';
-  document.getElementById('s-locked-ce').textContent = ceSym;
-  document.getElementById('s-locked-pe').textContent = peSym;
+  const setText2 = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
+  setText2('s-locked-ce-' + key, ceSym);
+  setText2('s-locked-pe-' + key, peSym);
 
-  if (ceSym !== '—') document.getElementById('ce-label').textContent = ceSym;
-  if (peSym !== '—') document.getElementById('pe-label').textContent = peSym;
-  if (s.futureSymbol) {
-    document.getElementById('futures-label').textContent = s.futureSymbol;
-    document.getElementById('nav-nifty-price').textContent =
-      'NIFTY ' + (document.getElementById('price-futures').textContent || '—');
-  }
+  if (ceSym !== '—') setText2('ce-label-' + key, ceSym);
+  if (peSym !== '—') setText2('pe-label-' + key, peSym);
+  if (s.futureSymbol) setText2('futures-label-' + key, s.futureSymbol);
 
   if (s.currentPosition === 'CE' && s.currentOptionPrice > 0) {
-    document.getElementById('price-ce').textContent = fmt(s.currentOptionPrice);
+    setText2('price-ce-' + key, fmt(s.currentOptionPrice));
   } else if (s.currentPosition === 'PE' && s.currentOptionPrice > 0) {
-    document.getElementById('price-pe').textContent = fmt(s.currentOptionPrice);
+    setText2('price-pe-' + key, fmt(s.currentOptionPrice));
   }
 
-  renderCandle(s.firstCandle  || null, 'c1');
-  renderCandle(s.secondCandle || null, 'c2');
-  renderCandle(s.thirdCandle  || null, 'c3');
+  renderCandle(s.firstCandle  || null, 'c1-' + key);
+  renderCandle(s.secondCandle || null, 'c2-' + key);
+  renderCandle(s.thirdCandle  || null, 'c3-' + key);
 
   const realized = s.cumulativePnL          || 0;
   const openPnl  = s.currentLegUnrealizedPnL || 0;
@@ -575,20 +668,22 @@ function renderSession(s) {
   const target   = s.targetPnL              || 0;
   const sl       = s.stopLossPoints         || 0;
 
-  setAmount('pnl-realized', realized);
-  setAmount('pnl-open',     openPnl);
-  setAmount('pnl-total',    total, true);
-  document.getElementById('pnl-target').textContent = '₹' + fmt(target);
-  document.getElementById('pnl-sl').textContent     = sl > 0 ? '₹' + fmt(sl) : '—';
+  setAmount('pnl-realized-' + key, realized);
+  setAmount('pnl-open-' + key,     openPnl);
+  setAmount('pnl-total-' + key,    total, true);
+  const pnlTargetEl = document.getElementById('pnl-target-' + key);
+  const pnlSlEl     = document.getElementById('pnl-sl-' + key);
+  if (pnlTargetEl) pnlTargetEl.textContent = '₹' + fmt(target);
+  if (pnlSlEl)     pnlSlEl.textContent     = sl > 0 ? '₹' + fmt(sl) : '—';
 
-  const trailingBox = document.getElementById('trailing-status-box');
+  const trailingBox = document.getElementById('trailing-status-box-' + key);
   if (trailingBox) {
     const trStep = s.trailingProfit || 0;
     if (trStep > 0) {
       trailingBox.classList.remove('hidden');
-      const hwEl    = document.getElementById('trailing-watermark');
-      const exitEl  = document.getElementById('trailing-exit-level');
-      const labelEl = document.getElementById('trailing-status-label');
+      const hwEl    = document.getElementById('trailing-watermark-' + key);
+      const exitEl  = document.getElementById('trailing-exit-level-' + key);
+      const labelEl = document.getElementById('trailing-status-label-' + key);
       if (s.trailingActive) {
         const hwVal   = s.trailingHighWatermark || 0;
         const exitLvl = hwVal - trStep;
@@ -600,7 +695,7 @@ function renderSession(s) {
         if (hwEl)    hwEl.textContent   = '—';
         if (exitEl)  exitEl.textContent = '—';
         if (labelEl) labelEl.textContent = '⏳ Waiting for Target';
-        if (labelEl) labelEl.style.color = 'var(--muted)';
+        if (labelEl) labelEl.style.color = 'var(--text2)';
       }
     } else {
       trailingBox.classList.add('hidden');
@@ -611,67 +706,71 @@ function renderSession(s) {
     ? s.trailingHighWatermark : target;
   const range = effectiveTarget + sl;
   const pct   = range > 0 ? ((total + sl) / range) * 100 : 50;
-  const bar   = document.getElementById('pnl-bar');
-  bar.style.width      = Math.max(0, Math.min(100, pct)) + '%';
-  bar.style.background = total >= 0 ? 'var(--success)' : 'var(--danger)';
+  const bar   = document.getElementById('pnl-bar-' + key);
+  if (bar) {
+    bar.style.width      = Math.max(0, Math.min(100, pct)) + '%';
+    bar.style.background = total >= 0 ? 'var(--success)' : 'var(--danger)';
+  }
 
-  const stopBox = document.getElementById('stop-reason-box');
-  if (s.stopReason) {
-    stopBox.classList.remove('hidden');
-    document.getElementById('stop-reason-text').textContent = s.stopReason;
-  } else {
-    stopBox.classList.add('hidden');
+  const stopBox = document.getElementById('stop-reason-box-' + key);
+  if (stopBox) {
+    if (s.stopReason) {
+      stopBox.classList.remove('hidden');
+      setText2('stop-reason-text-' + key, s.stopReason);
+    } else {
+      stopBox.classList.add('hidden');
+    }
   }
 
   const isStopped = !s.active;
-  document.getElementById('btn-start').disabled = !isStopped;
-  document.getElementById('btn-stop').disabled  =  isStopped;
+  const startBtn = document.getElementById('btn-start-' + key);
+  const stopBtn  = document.getElementById('btn-stop-' + key);
+  if (startBtn) startBtn.disabled = !isStopped;
+  if (stopBtn)  stopBtn.disabled  =  isStopped;
 
   if (strip) strip.style.opacity = isStopped ? '0.55' : '1';
+  if (card)  card.classList.toggle('card-stopped-dim', isStopped);
 
-  const liveParamsSection = document.getElementById('live-params-section');
+  const liveParamsSection = document.getElementById('live-params-section-' + key);
   if (liveParamsSection) {
     if (!isStopped) {
       liveParamsSection.classList.remove('hidden');
-      const liveTgt = document.getElementById('live-target');
-      const liveSl  = document.getElementById('live-sl');
-      const liveTrl = document.getElementById('live-trailing');
-      const liveSlChk = document.getElementById('live-sl-enabled');
+      const liveTgt   = document.getElementById('live-target-' + key);
+      const liveSl    = document.getElementById('live-sl-' + key);
+      const liveTrl   = document.getElementById('live-trailing-' + key);
+      const liveSlChk = document.getElementById('live-sl-enabled-' + key);
       if (liveTgt && !liveTgt.value) liveTgt.value = target || '';
       if (liveSl  && !liveSl.value)  liveSl.value  = sl > 0 ? sl : '';
       if (liveTrl && !liveTrl.value) liveTrl.value  = s.trailingProfit || 0;
       if (liveSlChk && sl > 0 && !liveSlChk.dataset.init) {
         liveSlChk.checked = true;
         liveSlChk.dataset.init = '1';
-        toggleLiveSlEnabled();
+        toggleLiveSlEnabled(key);
       }
     } else {
       liveParamsSection.classList.add('hidden');
-      const liveSlChk = document.getElementById('live-sl-enabled');
+      const liveSlChk = document.getElementById('live-sl-enabled-' + key);
       if (liveSlChk) delete liveSlChk.dataset.init;
-      const liveTgt = document.getElementById('live-target');
-      const liveSl  = document.getElementById('live-sl');
-      const liveTrl = document.getElementById('live-trailing');
+      const liveTgt = document.getElementById('live-target-' + key);
+      const liveSl  = document.getElementById('live-sl-' + key);
+      const liveTrl = document.getElementById('live-trailing-' + key);
       if (liveTgt) liveTgt.value = '';
       if (liveSl)  liveSl.value  = '';
       if (liveTrl) liveTrl.value  = '';
     }
   }
 
-  updateFooter(s.paperTrade ? 'PAPER' : 'LIVE');
+  renderHistory(key, s.history || []);
 
-  renderHistory(s.history || []);
-
-  // Update normal-user panels
   if (!isAdmin()) {
-    renderUserSignalPanel(s);
-    renderUserSessionCard(s);
+    renderUserSignalPanel(key, s);
+    renderUserSessionCard(key, s);
   }
 }
 
-function renderUserSignalPanel(s) {
-  const dirIcon  = document.getElementById('user-dir-icon');
-  const dirLabel = document.getElementById('user-dir-label');
+function renderUserSignalPanel(key, s) {
+  const dirIcon  = document.getElementById('user-dir-icon-' + key);
+  const dirLabel = document.getElementById('user-dir-label-' + key);
   if (dirIcon && dirLabel) {
     if (s.currentPosition === 'CE') {
       dirIcon.textContent  = '▲';
@@ -685,26 +784,26 @@ function renderUserSignalPanel(s) {
       dirLabel.style.color = '#f85149';
     } else {
       const st = s.status || '';
-      dirIcon.textContent  = st === 'WAITING_FOR_CANDLES' ? '⏳' : '—';
+      dirIcon.textContent  = st === 'WAITING_FOR_CANDLES' || st === 'WAITING' ? '⏳' : '—';
       dirIcon.style.color  = 'var(--text2)';
-      dirLabel.textContent = st === 'WAITING_FOR_CANDLES' ? 'Scanning...' : 'No Position';
+      dirLabel.textContent = st === 'WAITING_FOR_CANDLES' || st === 'WAITING' ? 'Scanning...' : 'No Position';
       dirLabel.style.color = 'var(--text2)';
     }
   }
-  const userMode   = document.getElementById('user-trade-mode-info');
-  const userLots   = document.getElementById('user-lots-info');
-  const userTarget = document.getElementById('user-target-info');
-  const userSl     = document.getElementById('user-sl-info');
+  const userMode   = document.getElementById('user-trade-mode-info-' + key);
+  const userLots   = document.getElementById('user-lots-info-' + key);
+  const userTarget = document.getElementById('user-target-info-' + key);
+  const userSl     = document.getElementById('user-sl-info-' + key);
   if (userMode)   userMode.textContent   = s.paperTrade ? '📄 Paper' : '🔴 Live';
-  if (userLots)   userLots.textContent   = (s.lotQuantity || 1) + ' lot × 65';
+  if (userLots)   userLots.textContent   = (s.lotQuantity || 1) + ' lot(s)';
   if (userTarget) userTarget.textContent = s.targetPnL ? '₹' + fmt(s.targetPnL) : '—';
   if (userSl)     userSl.textContent     = (s.stopLossPoints || 0) > 0 ? '₹' + fmt(s.stopLossPoints) : 'Off';
 }
 
-function renderUserSessionCard(s) {
-  const dot    = document.getElementById('usc-dot');
-  const status = document.getElementById('usc-status-text');
-  const date   = document.getElementById('usc-date');
+function renderUserSessionCard(key, s) {
+  const dot    = document.getElementById('usc-dot-' + key);
+  const status = document.getElementById('usc-status-text-' + key);
+  const date   = document.getElementById('usc-date-' + key);
   if (!dot) return;
 
   const active = s.active;
@@ -712,7 +811,7 @@ function renderUserSessionCard(s) {
 
   if (active) {
     dot.className    = 'usc-dot usc-dot-active';
-    status.textContent = st === 'WAITING_FOR_CANDLES' ? 'Scanning market…' : 'Strategy running';
+    status.textContent = (st === 'WAITING_FOR_CANDLES' || st === 'WAITING') ? 'Scanning market…' : 'Strategy running';
   } else if (st === 'STOPPED') {
     dot.className    = 'usc-dot usc-dot-stopped';
     status.textContent = 'Session complete';
@@ -739,8 +838,8 @@ function renderCandle(candle, prefix) {
   if (timeEl)  timeEl.textContent  = candle.time ? formatTime(candle.time) : '';
 }
 
-function renderHistory(rows) {
-  const tbody = document.getElementById('legs-body');
+function renderHistory(key, rows) {
+  const tbody = document.getElementById('legs-body-' + key);
   if (!tbody) return;
   if (!rows.length) {
     tbody.innerHTML = '<tr><td colspan="8" class="empty-row">No trades yet</td></tr>';
@@ -791,30 +890,38 @@ function startPricePoller() {
       const ticks = await get('/api/market-data/ticks');
       if (!ticks) return;
 
-      const futSym = (currentSession && currentSession.futureSymbol)
-                   || (savedConfig && savedConfig.futureSymbol)
-                   || document.getElementById('cfg-futures').value;
+      STRATEGIES.forEach(strat => {
+        const key = strat.key;
+        const state = cardState[key];
+        const futSym = (state.currentSession && state.currentSession.futureSymbol)
+                     || (state.savedConfig && state.savedConfig.futureSymbol)
+                     || document.getElementById('cfg-futures-' + key)?.value;
 
-      if (futSym && ticks[futSym]) {
-        const futPrice = ticks[futSym].lastPrice;
-        if (futPrice > 0) {
-          document.getElementById('price-futures').textContent = fmt(futPrice);
-          document.getElementById('nav-nifty-price').textContent = 'NIFTY ' + fmt(futPrice);
+        if (futSym && ticks[futSym]) {
+          const futPrice = ticks[futSym].lastPrice;
+          if (futPrice > 0) {
+            const el = document.getElementById('price-futures-' + key);
+            if (el) el.textContent = fmt(futPrice);
+          }
         }
-      }
 
-      if (currentSession) {
-        const hist   = currentSession.history || [];
-        const ceRows = hist.filter(r => r.position === 'CE');
-        const peRows = hist.filter(r => r.position === 'PE');
-        const ceSym  = ceRows.length ? ceRows[ceRows.length - 1].symbol : null;
-        const peSym  = peRows.length ? peRows[peRows.length - 1].symbol : null;
+        if (state.currentSession) {
+          const hist   = state.currentSession.history || [];
+          const ceRows = hist.filter(r => r.position === 'CE');
+          const peRows = hist.filter(r => r.position === 'PE');
+          const ceSym  = ceRows.length ? ceRows[ceRows.length - 1].symbol : null;
+          const peSym  = peRows.length ? peRows[peRows.length - 1].symbol : null;
 
-        if (ceSym && ticks[ceSym] && ticks[ceSym].lastPrice > 0)
-          document.getElementById('price-ce').textContent = fmt(ticks[ceSym].lastPrice);
-        if (peSym && ticks[peSym] && ticks[peSym].lastPrice > 0)
-          document.getElementById('price-pe').textContent = fmt(ticks[peSym].lastPrice);
-      }
+          if (ceSym && ticks[ceSym] && ticks[ceSym].lastPrice > 0) {
+            const el = document.getElementById('price-ce-' + key);
+            if (el) el.textContent = fmt(ticks[ceSym].lastPrice);
+          }
+          if (peSym && ticks[peSym] && ticks[peSym].lastPrice > 0) {
+            const el = document.getElementById('price-pe-' + key);
+            if (el) el.textContent = fmt(ticks[peSym].lastPrice);
+          }
+        }
+      });
     } catch (_) {}
   }, 2000);
 }
@@ -842,13 +949,13 @@ function doConnect() {
       document.getElementById('footer-ws').textContent = 'WS: Connected';
 
       wsClient.subscribe('/topic/trade-updates', () => {
-        if (!pnlFrozen) fetchAndRenderStatus();
+        fetchAndRenderStatusAll();
       });
 
       const myUsername = localStorage.getItem('jwtUsername');
       if (myUsername) {
         wsClient.subscribe('/topic/trade-updates/' + myUsername, () => {
-          if (!pnlFrozen) fetchAndRenderStatus();
+          fetchAndRenderStatusAll();
         });
       }
     }, () => {
@@ -940,14 +1047,9 @@ function updateClock() {
     new Date().toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour12: false }) + ' IST';
 }
 
-function updateFooter(mode) {
-  document.getElementById('footer-mode').textContent =
-    'Mode: ' + (mode === 'LIVE' ? '🔴 LIVE' : '📄 PAPER');
-}
-
-function setStrategyButtonsLoading(loading) {
-  const startBtn = document.getElementById('btn-start');
-  const stopBtn  = document.getElementById('btn-stop');
+function setStrategyButtonsLoading(key, loading) {
+  const startBtn = document.getElementById('btn-start-' + key);
+  const stopBtn  = document.getElementById('btn-stop-' + key);
   if (!startBtn || !stopBtn) return;
 
   if (loading) {
@@ -1026,4 +1128,336 @@ function escapeHtml(str) {
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;');
+}
+
+// ===== CARD TEMPLATE =====
+function buildCardHtml(s) {
+  const k = s.key;
+  const strikeModeBlock = s.manualStrike ? `
+        <div class="form-row">
+          <div class="form-group">
+            <label>Strike Mode</label>
+            <select id="cfg-strike-mode-${k}" onchange="onStrikeModeChange('${k}')">
+              <option value="AUTO_ATM">Auto ATM</option>
+              <option value="MANUAL">Manual</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Expiry</label>
+            <select id="cfg-expiry-${k}">
+              <option value="CURRENT_WEEK">Current Week</option>
+              <option value="NEXT_WEEK">Next Week</option>
+            </select>
+          </div>
+        </div>
+        <div id="manual-strike-section-${k}" style="display:none;">
+          <div class="form-row">
+            <div class="form-group">
+              <label>CE Strike</label>
+              <select id="cfg-ce-strike-${k}"><option>—</option></select>
+            </div>
+            <div class="form-group">
+              <label>PE Strike</label>
+              <select id="cfg-pe-strike-${k}"><option>—</option></select>
+            </div>
+          </div>
+        </div>` : `
+        <div class="form-row">
+          <div class="form-group">
+            <label>Strike Mode</label>
+            <input type="text" value="Auto ATM (fixed)" disabled/>
+            <input type="hidden" id="cfg-strike-mode-${k}" value="AUTO_ATM"/>
+          </div>
+          <div class="form-group">
+            <label>Expiry</label>
+            <select id="cfg-expiry-${k}">
+              <option value="CURRENT_WEEK">Current Week</option>
+              <option value="NEXT_WEEK">Next Week</option>
+            </select>
+          </div>
+        </div>`;
+
+  const reversalRow = s.breakout ? `
+        <div class="form-row">
+          <div class="form-group" style="flex-direction:row;align-items:center;gap:8px;">
+            <input type="checkbox" id="cfg-reversal-enabled-${k}" style="width:auto;" checked/>
+            <label style="text-transform:none;font-size:13px;">Enable Reversal (CE ⇄ PE)</label>
+          </div>
+        </div>` : '';
+
+  return `
+  <div class="panel strategy-card" id="card-${k}">
+    <div class="card-header">
+      <div class="card-title-group">
+        <span class="card-icon">${s.icon}</span>
+        <div>
+          <div style="font-weight:700;font-size:15px;">${s.title}</div>
+          <div class="card-subtitle">${s.subtitle}</div>
+        </div>
+      </div>
+      <span id="strategy-badge-${k}" class="badge badge-idle">IDLE</span>
+    </div>
+
+    <details class="card-config">
+      <summary>Configuration</summary>
+      <div class="form-row">
+        <div class="form-group">
+          <label>Direction</label>
+          <select id="cfg-direction-${k}">
+            <option value="BUY">Buy</option>
+            <option value="SELL">Sell</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Trade Mode</label>
+          <select id="cfg-trade-mode-${k}">
+            <option value="PAPER">Paper</option>
+            <option value="LIVE">Live</option>
+          </select>
+        </div>
+      </div>
+      <div class="form-row ${s.breakout ? 'hidden' : ''}">
+        <div class="form-group">
+          <label>Futures Instrument</label>
+          <select id="cfg-futures-${k}" onchange="onFuturesChange('${k}')"><option>Loading…</option></select>
+        </div>
+      </div>
+      ${strikeModeBlock}
+      <div class="form-row">
+        <div class="form-group">
+          <label>Start Time</label>
+          <select id="cfg-start-time-${k}"></select>
+        </div>
+        <div class="form-group">
+          <label>Lots</label>
+          <input type="number" id="cfg-lot-qty-${k}" value="1" min="1"/>
+          <span id="qty-total-hint-${k}" class="admin-only" style="font-size:11px;color:var(--text2);">Qty: <span id="qty-total-${k}">65</span></span>
+          <span id="qty-total-hint-user-${k}" class="user-only" style="font-size:11px;color:var(--text2);">Qty: <span id="qty-total-user-${k}">65</span></span>
+        </div>
+      </div>
+      <div class="form-row admin-only">
+        <div class="form-group">
+          <label>Max Reversals</label>
+          <input type="number" id="cfg-max-reversals-${k}" value="10" min="0"/>
+        </div>
+      </div>
+      ${reversalRow}
+      <div class="form-row">
+        <div class="form-group">
+          <label>Target (₹)</label>
+          <input type="number" id="cfg-target-${k}" value="2000"/>
+        </div>
+        <div class="form-group">
+          <label style="display:flex;align-items:center;gap:6px;">
+            <input type="checkbox" id="sl-enabled-${k}" style="width:auto;" onchange="toggleSlEnabled('${k}')"/> Stop Loss (₹)
+          </label>
+          <input type="number" id="cfg-sl-${k}" value="1000" disabled style="opacity:0.5;"/>
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label>Trailing Step (₹)</label>
+          <input type="number" id="cfg-trailing-${k}" value="0"/>
+        </div>
+        <div class="form-group" style="flex-direction:row;align-items:center;gap:8px;">
+          <input type="checkbox" id="cfg-eod-${k}" style="width:auto;" checked/>
+          <label style="text-transform:none;font-size:13px;">Square-off EOD</label>
+        </div>
+      </div>
+      <button class="btn btn-primary btn-full" onclick="saveConfig('${k}')">💾 Save Configuration</button>
+      <div id="config-msg-${k}" class="msg-box hidden"></div>
+    </details>
+
+    <div class="strategy-controls">
+      <button id="btn-start-${k}" class="btn btn-success" onclick="startStrategy('${k}')" disabled>▶️ Start</button>
+      <button id="btn-stop-${k}"  class="btn btn-danger"  onclick="stopStrategy('${k}')" disabled>⏹️ Stop</button>
+    </div>
+
+    <div id="live-params-section-${k}" class="live-params hidden">
+      <div class="live-params-title">⚙️ Live Parameter Adjustment</div>
+      <div class="live-params-row">
+        <div class="form-group">
+          <label>Target (₹)</label>
+          <input type="number" id="live-target-${k}"/>
+        </div>
+        <div class="form-group">
+          <label style="display:flex;align-items:center;gap:6px;">
+            <input type="checkbox" id="live-sl-enabled-${k}" style="width:auto;" onchange="toggleLiveSlEnabled('${k}')"/> SL (₹)
+          </label>
+          <input type="number" id="live-sl-${k}" disabled style="opacity:0.5;"/>
+        </div>
+        <div class="form-group">
+          <label>Trailing (₹)</label>
+          <input type="number" id="live-trailing-${k}"/>
+        </div>
+        <button class="btn btn-sm btn-primary" onclick="updateLiveParams('${k}')">Update</button>
+      </div>
+      <div id="live-params-msg-${k}" class="msg-box hidden"></div>
+    </div>
+
+    <div class="active-config-strip hidden" id="active-config-strip-${k}">
+      <span class="cfg-chip" id="cfg-chip-future-${k}">—</span>
+      <span class="cfg-chip" id="cfg-chip-dir-${k}">—</span>
+      <span class="cfg-chip" id="cfg-chip-strike-${k}">—</span>
+      <span class="cfg-chip" id="cfg-chip-expiry-${k}">—</span>
+      <span class="cfg-chip cfg-chip-time" id="cfg-chip-time-${k}">—</span>
+      <span class="cfg-chip cfg-chip-target" id="cfg-chip-target-${k}">—</span>
+      <span class="cfg-chip cfg-chip-sl" id="cfg-chip-sl-${k}">—</span>
+      <span class="cfg-chip" id="cfg-chip-lots-${k}">—</span>
+      <span class="cfg-chip" id="cfg-chip-mode-${k}">—</span>
+      <span class="cfg-chip" id="cfg-chip-ce-${k}">CE —</span>
+      <span class="cfg-chip" id="cfg-chip-pe-${k}">PE —</span>
+    </div>
+
+    <div class="price-grid">
+      <div class="price-card ${s.breakout ? 'hidden' : ''}">
+        <div class="price-label" id="futures-label-${k}">FUT</div>
+        <div class="price-value" id="price-futures-${k}">—</div>
+      </div>
+      <div class="price-card ce-card">
+        <div class="price-label" id="ce-label-${k}">CE</div>
+        <div class="price-value" id="price-ce-${k}">—</div>
+      </div>
+      <div class="price-card pe-card">
+        <div class="price-label" id="pe-label-${k}">PE</div>
+        <div class="price-value" id="price-pe-${k}">—</div>
+      </div>
+    </div>
+
+    <div class="status-section admin-only">
+      <div class="status-row">
+        <span class="status-label">State</span>
+        <span class="status-value badge badge-idle" id="s-state-${k}">IDLE</span>
+      </div>
+      <div class="status-row">
+        <span class="status-label">Started By</span>
+        <span class="status-value" id="s-started-by-${k}">—</span>
+      </div>
+      <div class="status-row">
+        <span class="status-label">Reversals</span>
+        <span class="status-value" id="s-reversals-${k}">0 / 0</span>
+      </div>
+      <div class="status-row">
+        <span class="status-label">Direction</span>
+        <span class="status-value" id="s-direction-${k}">—</span>
+      </div>
+      <div class="status-row">
+        <span class="status-label">Locked CE</span>
+        <span class="status-value monospace" id="s-locked-ce-${k}">—</span>
+      </div>
+      <div class="status-row">
+        <span class="status-label">Locked PE</span>
+        <span class="status-value monospace" id="s-locked-pe-${k}">—</span>
+      </div>
+    </div>
+
+    <div class="signal-monitor user-only">
+      <div class="signal-card-row">
+        <div class="signal-dir-card">
+          <div class="signal-dir-icon" id="user-dir-icon-${k}">—</div>
+          <div class="signal-dir-label" id="user-dir-label-${k}">No Position</div>
+        </div>
+        <div class="signal-info-card">
+          <div class="signal-info-row">
+            <span class="signal-info-label">Mode</span>
+            <span class="signal-info-value" id="user-trade-mode-info-${k}">—</span>
+          </div>
+          <div class="signal-info-row">
+            <span class="signal-info-label">Lots</span>
+            <span class="signal-info-value" id="user-lots-info-${k}">—</span>
+          </div>
+          <div class="signal-info-row">
+            <span class="signal-info-label">Target</span>
+            <span class="signal-info-value" id="user-target-info-${k}">—</span>
+          </div>
+          <div class="signal-info-row">
+            <span class="signal-info-label">SL</span>
+            <span class="signal-info-value" id="user-sl-info-${k}">—</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="candle-section admin-only">
+      <h4>${s.breakout ? '5-Min Candles' : '1-Min Candles'}</h4>
+      <div class="candle-row">
+        <div class="candle-box">
+          <div class="c-label">1st</div>
+          <div class="c-value" id="c1-${k}-close">—</div>
+          <div class="c-time" id="c1-${k}-time"></div>
+        </div>
+        <div class="candle-box">
+          <div class="c-label">2nd</div>
+          <div class="c-value" id="c2-${k}-close">—</div>
+          <div class="c-time" id="c2-${k}-time"></div>
+        </div>
+        <div class="candle-box active">
+          <div class="c-label">3rd</div>
+          <div class="c-value" id="c3-${k}-close">—</div>
+          <div class="c-time" id="c3-${k}-time"></div>
+        </div>
+      </div>
+    </div>
+
+    <div id="stop-reason-box-${k}" class="stop-reason hidden">
+      <span id="stop-reason-text-${k}"></span>
+    </div>
+
+    <div class="pnl-grid">
+      <div class="pnl-card">
+        <div class="pnl-label">Realized</div>
+        <div class="pnl-value" id="pnl-realized-${k}">₹0.00</div>
+      </div>
+      <div class="pnl-card">
+        <div class="pnl-label">Open</div>
+        <div class="pnl-value" id="pnl-open-${k}">₹0.00</div>
+      </div>
+      <div class="pnl-card pnl-total-card">
+        <div class="pnl-label">Total P&amp;L</div>
+        <div class="pnl-value pnl-total" id="pnl-total-${k}">₹0.00</div>
+      </div>
+    </div>
+
+    <div class="progress-section">
+      <div class="progress-bar-wrap">
+        <div class="progress-bar" id="pnl-bar-${k}" style="width:50%;"></div>
+      </div>
+      <div class="progress-labels">
+        <span class="sl-label" id="pnl-sl-${k}">₹—</span>
+        <span class="target-label" id="pnl-target-${k}">₹—</span>
+      </div>
+    </div>
+
+    <div id="trailing-status-box-${k}" class="hidden" style="margin-bottom:14px;font-size:12px;">
+      <div class="status-row">
+        <span class="status-label" id="trailing-status-label-${k}">⏳ Waiting for Target</span>
+        <span class="status-value">HW: <span id="trailing-watermark-${k}">—</span> · Exit: <span id="trailing-exit-level-${k}">—</span></span>
+      </div>
+    </div>
+
+    <button class="btn btn-outline btn-sm" style="margin-bottom:14px;" onclick="resetPnl('${k}')">🔄 Reset P&amp;L</button>
+
+    <div class="table-wrap admin-only">
+      <table class="trade-table">
+        <thead>
+          <tr>
+            <th>Leg</th><th>Type</th><th>Entry</th><th>Entry Time</th>
+            <th>Exit</th><th>Exit Time</th><th>P&amp;L</th><th>Reason</th>
+          </tr>
+        </thead>
+        <tbody id="legs-body-${k}">
+          <tr><td colspan="8" class="empty-row">No trades yet</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="usc-card user-only">
+      <div class="usc-header">
+        <span class="usc-dot usc-dot-idle" id="usc-dot-${k}"></span>
+        <span class="usc-status" id="usc-status-text-${k}">Awaiting start</span>
+      </div>
+      <div class="usc-date" id="usc-date-${k}">—</div>
+      <div class="usc-note">Trade details are managed by the system. Contact admin for a full report.</div>
+    </div>
+  </div>`;
 }

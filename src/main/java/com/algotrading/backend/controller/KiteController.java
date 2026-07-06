@@ -11,12 +11,17 @@ import com.algotrading.backend.service.KiteInstrumentService;
 import com.algotrading.backend.service.KiteTickerService;
 import com.algotrading.backend.service.KiteTokenStore;
 import com.algotrading.backend.service.UserRegistryService;
+import com.zerodhatech.kiteconnect.KiteConnect;
+import com.zerodhatech.models.Margin;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.servlet.view.RedirectView;
 
+import java.io.UnsupportedEncodingException;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.security.Principal;
 import java.time.LocalDate;
 import java.util.LinkedHashMap;
@@ -37,6 +42,7 @@ public class KiteController {
     private final MarketDataCache cache;
     private final UserRegistryService userRegistry;
     private final TradingEngineRegistry engineRegistry;
+    private final KiteConnect kiteConnect;
 
     // ---- Authentication ----
 
@@ -60,7 +66,14 @@ public class KiteController {
             return new RedirectView("/algo?kite=connected");
         } catch (Exception e) {
             log.error("Kite callback error: {}", e.getMessage());
-            return new RedirectView("/algo?kite=error&message=" + e.getMessage());
+            String encoded;
+            try {
+                encoded = URLEncoder.encode(e.getMessage() != null ? e.getMessage() : "Unknown error",
+                        StandardCharsets.UTF_8.toString());
+            } catch (UnsupportedEncodingException uee) {
+                encoded = "Kite authentication failed";
+            }
+            return new RedirectView("/algo?kite=error&message=" + encoded);
         }
     }
 
@@ -106,8 +119,8 @@ public class KiteController {
         userRegistry.updateAccessToken(username, token);
         log.error("[{}] Kite access token updated via /my-access-token", username);
 
-        // 2. Update the running engine if one exists (hot-reload token)
-        engineRegistry.getEngine(username).ifPresent(engine -> engine.updateKiteAccessToken(token));
+        // 2. Update all of this user's running engines, if any (hot-reload token)
+        engineRegistry.getAllForUser(username).forEach(engine -> engine.updateKiteAccessToken(token));
         kiteAuthService.exchangeToken(token);
 
         // 3. Also update the GLOBAL Kite connection (shared ticker + instrument feed).
@@ -155,16 +168,68 @@ public class KiteController {
         ));
     }
 
+    /** Zerodha funds/margin balance for the "equity" segment (used for options margin too). */
+    @GetMapping("/funds")
+    public ResponseEntity<Map<String, Object>> getFunds() {
+        if (!kiteProperties.isConnected()) {
+            return ResponseEntity.badRequest().body(Map.of("error", "Kite not connected"));
+        }
+        try {
+            Margin margin = kiteConnect.getMargins("equity");
+            Map<String, Object> result = new LinkedHashMap<>();
+            if (margin.available != null) {
+                result.put("availableCash", margin.available.cash);
+                result.put("liveBalance", margin.available.liveBalance);
+                result.put("collateral", margin.available.collateral);
+                result.put("intradayPayin", margin.available.intradayPayin);
+                result.put("adhocMargin", margin.available.adhocMargin);
+            }
+            if (margin.utilised != null) {
+                result.put("utilisedDebits", margin.utilised.debits);
+                result.put("utilisedSpan", margin.utilised.span);
+                result.put("utilisedOptionPremium", margin.utilised.optionPremium);
+                result.put("utilisedExposure", margin.utilised.exposure);
+                result.put("m2mUnrealised", margin.utilised.m2mUnrealised);
+                result.put("m2mRealised", margin.utilised.m2mRealised);
+            }
+            result.put("net", margin.net);
+            // "Available Margin" — the actual money available for further trading (net of
+            // utilised span/exposure/premium), same figure Kite's own app/console labels
+            // "Available Margin". Falls back to live_balance if net isn't populated.
+            // (All Margin fields from the SDK are Strings — parse defensively.)
+            Double net = parseMargin(margin.net);
+            Double availableMargin = (net != null && net != 0)
+                    ? net
+                    : (margin.available != null ? parseMargin(margin.available.liveBalance) : null);
+            result.put("availableMargin", availableMargin);
+            return ResponseEntity.ok(result);
+        } catch (Exception | com.zerodhatech.kiteconnect.kitehttp.exceptions.KiteException e) {
+            log.warn("Failed to fetch Kite funds: {}", e.getMessage());
+            return ResponseEntity.status(502).body(Map.of("error", "Failed to fetch funds: " + e.getMessage()));
+        }
+    }
+
+    /** Margin fields from the Kite SDK are Strings (e.g. "12345.67") — parse defensively. */
+    private static Double parseMargin(String raw) {
+        if (raw == null || raw.isBlank()) return null;
+        try {
+            return Double.parseDouble(raw);
+        } catch (NumberFormatException e) {
+            return null;
+        }
+    }
+
     // ---- Instruments ----
 
-    /** Get all NIFTY futures instruments (for dropdown selection) */
+    /** Get futures instruments for a given index (NIFTY or BANKNIFTY) for dropdown selection */
     @GetMapping("/instruments/futures")
-    public ResponseEntity<List<KiteInstrument>> getNiftyFutures() {
-        return ResponseEntity.ok(instrumentService.getNiftyFutures());
+    public ResponseEntity<List<KiteInstrument>> getNiftyFutures(
+            @RequestParam(defaultValue = "NIFTY") String index) {
+        return ResponseEntity.ok(instrumentService.getFuturesFor(index));
     }
 
     /**
-     * Get NIFTY options for a given expiry type.
+     * Get options for a given index (NIFTY or BANKNIFTY) and expiry type.
      * Filtered to ±400 strikes from current ATM.
      * Pass ?niftyPrice=22000 if you want to override the cached price.
      */
@@ -172,15 +237,16 @@ public class KiteController {
     public ResponseEntity<OptionChainResponse> getNiftyOptions(
             @RequestParam(defaultValue = "CURRENT_WEEK") ExpiryType expiryType,
             @RequestParam(required = false) String futuresSymbol,
-            @RequestParam(required = false) Double niftyPrice) {
+            @RequestParam(required = false) Double niftyPrice,
+            @RequestParam(defaultValue = "NIFTY") String index) {
 
         String symbol = futuresSymbol;
         double price = niftyPrice != null ? niftyPrice : cache.getLastPrice(symbol);
-        if (price <= 0) price = 22000;  // fallback default
+        if (price <= 0) price = "BANKNIFTY".equals(index) ? 48000 : 22000;  // fallback default
 
         OptionChainResponse chain = kiteProperties.isConnected()
-                ? instrumentService.buildKiteOptionChain(symbol, price, expiryType)
-                : buildFallbackChain(symbol, price, expiryType);
+                ? instrumentService.buildKiteOptionChain(index, symbol, price, expiryType)
+                : buildFallbackChain(symbol, price, expiryType, "BANKNIFTY".equals(index) ? 100 : 50);
 
         return ResponseEntity.ok(chain);
     }
@@ -189,22 +255,24 @@ public class KiteController {
     @GetMapping("/instruments/options/all")
     public ResponseEntity<Map<String, Object>> getAllOptions(
             @RequestParam(required = false) String futuresSymbol,
-            @RequestParam(required = false) Double niftyPrice) {
+            @RequestParam(required = false) Double niftyPrice,
+            @RequestParam(defaultValue = "NIFTY") String index) {
 
         String symbol = futuresSymbol != null ? futuresSymbol : "NIFTY25APRFUT";
         double price = niftyPrice != null ? niftyPrice : cache.getLastPrice(symbol);
-        if (price <= 0) price = 22000;
+        int strikeGap = "BANKNIFTY".equals(index) ? 100 : 50;
+        if (price <= 0) price = "BANKNIFTY".equals(index) ? 48000 : 22000;
 
         OptionChainResponse currentWeek = kiteProperties.isConnected()
-                ? instrumentService.buildKiteOptionChain(symbol, price, ExpiryType.CURRENT_WEEK)
-                : buildFallbackChain(symbol, price, ExpiryType.CURRENT_WEEK);
+                ? instrumentService.buildKiteOptionChain(index, symbol, price, ExpiryType.CURRENT_WEEK)
+                : buildFallbackChain(symbol, price, ExpiryType.CURRENT_WEEK, strikeGap);
 
         OptionChainResponse nextWeek = kiteProperties.isConnected()
-                ? instrumentService.buildKiteOptionChain(symbol, price, ExpiryType.NEXT_WEEK)
-                : buildFallbackChain(symbol, price, ExpiryType.NEXT_WEEK);
+                ? instrumentService.buildKiteOptionChain(index, symbol, price, ExpiryType.NEXT_WEEK)
+                : buildFallbackChain(symbol, price, ExpiryType.NEXT_WEEK, strikeGap);
 
         Map<String, LocalDate> expiryDates = kiteProperties.isConnected()
-                ? instrumentService.getExpiryDates()
+                ? instrumentService.getExpiryDates(index)
                 : Map.of("CURRENT_WEEK", getNextTuesday(), "NEXT_WEEK", getNextTuesday().plusWeeks(1));
 
         return ResponseEntity.ok(Map.of(
@@ -259,16 +327,17 @@ public class KiteController {
 
     // ---- Fallback option chain (no Kite connection) ----
 
-    private OptionChainResponse buildFallbackChain(String symbol, double price, ExpiryType expiryType) {
+    private OptionChainResponse buildFallbackChain(String symbol, double price, ExpiryType expiryType, int strikeGap) {
         // Delegate to the existing offline option chain builder
-        int atm = (int) (Math.round(price / 50.0) * 50);
+        int atm = (int) (Math.round(price / strikeGap) * strikeGap);
+        String indexTag = (symbol != null && symbol.contains("BANKNIFTY")) ? "BANKNIFTY" : "NIFTY";
         List<OptionChainResponse.StrikeData> strikes = new java.util.ArrayList<>();
-        for (int s = atm - 400; s <= atm + 400; s += 50) {
+        for (int s = atm - 400; s <= atm + 400; s += strikeGap) {
             String expTag = expiryType == ExpiryType.CURRENT_WEEK ? "CW" : "NW";
             strikes.add(OptionChainResponse.StrikeData.builder()
                     .strikePrice(s)
-                    .ceInstrument("NIFTY" + expTag + s + "CE")
-                    .peInstrument("NIFTY" + expTag + s + "PE")
+                    .ceInstrument(indexTag + expTag + s + "CE")
+                    .peInstrument(indexTag + expTag + s + "PE")
                     .isAtm(s == atm)
                     .expiryType(expiryType.name())
                     .build());

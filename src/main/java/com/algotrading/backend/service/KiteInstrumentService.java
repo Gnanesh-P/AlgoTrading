@@ -38,18 +38,27 @@ public class KiteInstrumentService {
      * Returns the nearest NIFTY Future instrument (current month, not NIFTYNXT50).
      */
     public List<KiteInstrument> getNiftyFutures() {
+        return getFuturesFor("NIFTY");
+    }
+
+    /**
+     * Returns futures instruments for the given index ("NIFTY" or "BANKNIFTY"),
+     * with the underlying spot index prepended as the first entry.
+     */
+    public List<KiteInstrument> getFuturesFor(String indexName) {
         ensureCacheLoaded();
         List<KiteInstrument> result = new ArrayList<>();
+        boolean isBankNifty = "BANKNIFTY".equals(indexName);
         result.add(KiteInstrument.builder()
-                .instrumentToken(256265L)
-                .tradingsymbol("NIFTY 50")
-                .name("NIFTY 50")
+                .instrumentToken(isBankNifty ? 260105L : 256265L)
+                .tradingsymbol(isBankNifty ? "NIFTY BANK" : "NIFTY 50")
+                .name(isBankNifty ? "NIFTY BANK" : "NIFTY 50")
                 .instrumentType("EQ")
                 .segment("INDICES")
                 .exchange("NSE")
                 .build());
         instrumentCache.stream()
-                .filter(i -> "NIFTY".equals(i.getName()))
+                .filter(i -> indexName.equals(i.getName()))
                 .filter(i -> "FUT".equals(i.getInstrumentType()))
                 .filter(i -> "NFO-FUT".equals(i.getSegment()))
                 .sorted(Comparator.comparing(KiteInstrument::getExpiry))
@@ -61,27 +70,40 @@ public class KiteInstrumentService {
      * Returns NIFTY CE and PE options for a given expiry type, filtered ±400 from ATM.
      */
     public List<KiteInstrument> getNiftyOptions(ExpiryType expiryType, double niftyPrice) {
+        return getOptionsFor("NIFTY", expiryType, niftyPrice);
+    }
+
+    /**
+     * Returns CE/PE options for the given index ("NIFTY" or "BANKNIFTY") + expiry type.
+     */
+    public List<KiteInstrument> getOptionsFor(String indexName, ExpiryType expiryType, double price) {
         ensureCacheLoaded();
-        LocalDate targetExpiry = getExpiryDate(expiryType);
-        int atmStrike = computeAtm(niftyPrice);
+        LocalDate targetExpiry = getExpiryDate(indexName, expiryType);
 
         return instrumentCache.stream()
                 .filter(i -> "CE".equals(i.getInstrumentType()) || "PE".equals(i.getInstrumentType()))
-                .filter(i -> "NIFTY".equals(i.getName()))
+                .filter(i -> indexName.equals(i.getName()))
                 .filter(i -> i.getExpiry() != null && i.getExpiry().equals(targetExpiry))
-//                .filter(i -> i.getStrike() >= atmStrike - STRIKE_RANGE
-//                        && i.getStrike() <= atmStrike + STRIKE_RANGE)
                 .sorted(Comparator.comparingDouble(KiteInstrument::getStrike))
                 .collect(Collectors.toList());
     }
 
     /**
-     * Build option chain response for UI dropdown. Groups CE/PE by strike price.
+     * Build option chain response for UI dropdown. Groups CE/PE by strike price. Defaults to NIFTY.
      */
     public OptionChainResponse buildKiteOptionChain(String futuresSymbol, double niftyPrice,
                                                     ExpiryType expiryType) {
-        List<KiteInstrument> options = getNiftyOptions(expiryType, niftyPrice);
-        int atmStrike = computeAtm(niftyPrice);
+        return buildKiteOptionChain("NIFTY", futuresSymbol, niftyPrice, expiryType);
+    }
+
+    /**
+     * Build option chain response for the given index ("NIFTY" or "BANKNIFTY").
+     */
+    public OptionChainResponse buildKiteOptionChain(String indexName, String futuresSymbol, double price,
+                                                    ExpiryType expiryType) {
+        List<KiteInstrument> options = getOptionsFor(indexName, expiryType, price);
+        int strikeGap = "BANKNIFTY".equals(indexName) ? 100 : STRIKE_GAP;
+        int atmStrike = computeAtm(price, strikeGap);
 
         Map<Integer, OptionChainResponse.StrikeData> strikeMap = new LinkedHashMap<>();
 
@@ -107,7 +129,7 @@ public class KiteInstrumentService {
 
         return OptionChainResponse.builder()
                 .futuresInstrument(futuresSymbol)
-                .niftyPrice(niftyPrice)
+                .niftyPrice(price)
                 .atmStrike(atmStrike)
                 .strikes(new ArrayList<>(strikeMap.values()))
                 .build();
@@ -118,8 +140,13 @@ public class KiteInstrumentService {
      * Derived from actual instrument data so holiday shifts are handled correctly.
      */
     public Map<String, LocalDate> getExpiryDates() {
+        return getExpiryDates("NIFTY");
+    }
+
+    /** Get expiry dates for current and next week for the given index ("NIFTY" or "BANKNIFTY"). */
+    public Map<String, LocalDate> getExpiryDates(String indexName) {
         ensureCacheLoaded();
-        List<LocalDate> dates = resolveNiftyOptionExpiries();
+        List<LocalDate> dates = resolveOptionExpiries(indexName);
         Map<String, LocalDate> result = new LinkedHashMap<>();
         if (!dates.isEmpty()) {
             result.put("CURRENT_WEEK", dates.get(0));
@@ -157,9 +184,16 @@ public class KiteInstrumentService {
      * our constructed name and what Kite actually stores in the instrument dump.
      */
     public Optional<KiteInstrument> findNiftyOption(LocalDate expiry, int strike, String optionType) {
+        return findOption("NIFTY", expiry, strike, optionType);
+    }
+
+    /**
+     * Find an option by index name (e.g. "NIFTY" or "BANKNIFTY") + expiry date + strike + option type.
+     */
+    public Optional<KiteInstrument> findOption(String indexName, LocalDate expiry, int strike, String optionType) {
         ensureCacheLoaded();
         return instrumentCache.stream()
-                .filter(i -> "NIFTY".equals(i.getName()))
+                .filter(i -> indexName.equals(i.getName()))
                 .filter(i -> optionType.equals(i.getInstrumentType()))
                 .filter(i -> expiry.equals(i.getExpiry()))
                 .filter(i -> (int) i.getStrike() == strike)
@@ -263,8 +297,8 @@ public class KiteInstrumentService {
      * Falls back to calendar-based computation only when the cache is empty
      * (i.e. Kite not yet connected).
      */
-    private LocalDate getExpiryDate(ExpiryType type) {
-        List<LocalDate> dates = resolveNiftyOptionExpiries();
+    private LocalDate getExpiryDate(String indexName, ExpiryType type) {
+        List<LocalDate> dates = resolveOptionExpiries(indexName);
         if (!dates.isEmpty()) {
             if (type == ExpiryType.CURRENT_WEEK) {
                 return dates.get(0);
@@ -277,13 +311,13 @@ public class KiteInstrumentService {
     }
 
     /**
-     * Collects the distinct upcoming NIFTY option expiry dates from the cache,
+     * Collects the distinct upcoming option expiry dates for the given index from the cache,
      * sorted ascending. The first entry is the current week expiry, second is next week.
      */
-    private List<LocalDate> resolveNiftyOptionExpiries() {
+    private List<LocalDate> resolveOptionExpiries(String indexName) {
         LocalDate today = LocalDate.now();
         return instrumentCache.stream()
-                .filter(i -> "NIFTY".equals(i.getName()))
+                .filter(i -> indexName.equals(i.getName()))
                 .filter(i -> "CE".equals(i.getInstrumentType()) || "PE".equals(i.getInstrumentType()))
                 .map(KiteInstrument::getExpiry)
                 .filter(Objects::nonNull)
@@ -302,7 +336,7 @@ public class KiteInstrumentService {
         return type == ExpiryType.NEXT_WEEK ? d.plusWeeks(1) : d;
     }
 
-    private int computeAtm(double price) {
-        return (int) (Math.round(price / STRIKE_GAP) * STRIKE_GAP);
+    private int computeAtm(double price, int strikeGap) {
+        return (int) (Math.round(price / strikeGap) * strikeGap);
     }
 }

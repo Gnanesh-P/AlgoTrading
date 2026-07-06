@@ -6,7 +6,9 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.*;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
+import org.springframework.web.util.UriComponentsBuilder;
 
+import java.net.URI;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -24,6 +26,9 @@ public class MarketQuotesService {
         new String[]{"^INDIAVIX", "INDIA VIX"}
     );
 
+    // Deliberately NOT the app's shared proxy-routed RestTemplate bean (see AppConfig) — that
+    // proxy is provisioned for Kite Connect traffic specifically and rejects the CONNECT tunnel
+    // to Yahoo Finance's host with a 403 (confirmed by testing), so this call goes out directly.
     private final RestTemplate http = new RestTemplate();
     private final ObjectMapper mapper = new ObjectMapper();
 
@@ -52,9 +57,21 @@ public class MarketQuotesService {
 
     private Map<String, Object> fetchSymbol(String symbol, String displayName) {
         try {
-            String encoded = symbol.replace("^", "%5E");
-            String url = "https://query1.finance.yahoo.com/v8/finance/chart/"
-                + encoded + "?interval=1d&range=1d&includePrePost=false";
+            // Build the URI from the RAW symbol (e.g. "^NSEI") and let UriComponentsBuilder
+            // percent-encode it exactly once. Previously the code pre-encoded "^" to "%5E" as a
+            // plain string and then handed that string to RestTemplate.exchange(String, ...),
+            // which re-encodes template strings and turned "%5E" into "%255E" on the wire —
+            // Yahoo received a garbled symbol and returned a (misleading) 404 "may be delisted"
+            // for what is actually a perfectly valid, existing symbol. Passing a pre-built URI
+            // to the exchange(URI, ...) overload avoids any further re-encoding.
+            URI uri = UriComponentsBuilder
+                .fromHttpUrl("https://query1.finance.yahoo.com/v8/finance/chart/" + symbol)
+                .queryParam("interval", "1d")
+                .queryParam("range", "1d")
+                .queryParam("includePrePost", "false")
+                .build()
+                .encode()
+                .toUri();
 
             HttpHeaders headers = new HttpHeaders();
             headers.set("User-Agent",
@@ -62,7 +79,7 @@ public class MarketQuotesService {
             headers.set("Accept", "application/json");
 
             ResponseEntity<String> res = http.exchange(
-                url, HttpMethod.GET, new HttpEntity<>(headers), String.class);
+                uri, HttpMethod.GET, new HttpEntity<>(headers), String.class);
 
             JsonNode meta = mapper.readTree(res.getBody())
                 .path("chart").path("result").get(0).path("meta");

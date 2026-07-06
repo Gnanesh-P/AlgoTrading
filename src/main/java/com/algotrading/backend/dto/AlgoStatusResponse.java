@@ -14,6 +14,8 @@ import java.util.List;
 @AllArgsConstructor
 public class AlgoStatusResponse {
 
+    private String  strategyKey;          // NIFTY_SCALP | BANKNIFTY_SCALP | NIFTY_BREAKOUT
+    private String  tradeDirection;       // BUY | SELL
     private boolean active;
     private String  status;               // RUNNING | WAITING | TARGET_HIT | SL_HIT | STOPPED
     private String  startedBy;           // JWT username of whoever started this session

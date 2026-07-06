@@ -34,6 +34,12 @@ public class TradeSession {
     private int reversalCount;
     private int currentLegNumber;
 
+    // The option type the price-action SIGNAL currently favors (CE=bullish, PE=bearish).
+    // In BUY mode the traded leg always matches this. In SELL mode the traded leg is the
+    // opposite (we write/short the other leg), so this is tracked separately from the
+    // TradeEntry.optionType of the currently open leg.
+    private OptionType currentSignalType;
+
     // Candle tracking
     private Candle firstCandle;
     private Candle secondCandle;
@@ -51,6 +57,12 @@ public class TradeSession {
     // Trade legs
     @Builder.Default
     private List<TradeEntry> tradeLegs = new ArrayList<>();
+
+    // Strategy 3 (breakout) only: each leg's (CE/PE) reference candle whose High/Low the
+    // subsequent candles are compared against for breakout entry. Keyed by "CE"/"PE".
+    // Unused by Strategy 1/2 (scalping engine).
+    @Builder.Default
+    private java.util.Map<String, Candle> legReferenceCandles = new java.util.HashMap<>();
 
     // P&L tracking (cumulative across all legs)
     private double cumulativePnL;
