@@ -10,8 +10,10 @@ public class AlgoStartRequest {
     private long    futureToken;
     private String  ceSymbol;
     private long    ceToken;
+    private int     ceStrikePrice;          // Manual mode: numeric strike, e.g. 21000
     private String  peSymbol;
     private long    peToken;
+    private int     peStrikePrice;          // Manual mode: numeric strike, e.g. 20000
     private int     lotQuantity;
     private double  targetPrice;
     private double  stopLoss;

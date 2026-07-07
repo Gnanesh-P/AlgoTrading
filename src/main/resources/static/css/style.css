@@ -334,6 +334,9 @@ select option { background: var(--bg3); }
 .c-label { font-size: 10px; color: var(--text2); margin-bottom: 4px; text-transform: uppercase; }
 .c-value { font-size: 16px; font-weight: 700; font-family: monospace; }
 .c-time { font-size: 10px; color: var(--text2); margin-top: 3px; }
+.c-hl { font-size: 11px; font-family: monospace; color: var(--text2); margin-top: 2px; }
+/* Breakout reference-candle row shows only CE + PE (2 boxes), not 3 — use a 2-col grid */
+.candle-row:has(.ce-card):has(.pe-card) { grid-template-columns: 1fr 1fr; }
 
 .stop-reason { background: rgba(218,54,51,0.1); border: 1px solid rgba(218,54,51,0.3); border-radius: var(--radius); padding: 10px 14px; font-size: 13px; color: #f85149; margin-top: 10px; }
 

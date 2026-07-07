@@ -414,7 +414,7 @@ async function saveConfig(key) {
   const futOpt = futSel.selectedOptions[0];
   const futureToken = futOpt ? parseInt(futOpt.dataset.token || 0) : 0;
 
-  let ceSymbol = '', peSymbol = '', ceToken = 0, peToken = 0;
+  let ceSymbol = '', peSymbol = '', ceToken = 0, peToken = 0, ceStrikePrice = 0, peStrikePrice = 0;
 
   if (strikeMode === 'MANUAL') {
     const ceOpt = ceSel.selectedOptions[0];
@@ -423,6 +423,11 @@ async function saveConfig(key) {
     peSymbol = peSel.value;
     ceToken  = ceOpt ? parseInt(ceOpt.dataset.token || 0) : 0;
     peToken  = peOpt ? parseInt(peOpt.dataset.token || 0) : 0;
+    // data-strike carries the numeric strike (e.g. 21000) from the option-chain dropdown —
+    // needed so the backend can lock/report the selected strike (see lockedCeStrike/lockedPeStrike
+    // in AlgoStatusResponse, used by the breakout reference-candle High/Low display).
+    ceStrikePrice = ceOpt ? parseInt(ceOpt.dataset.strike || 0) : 0;
+    peStrikePrice = peOpt ? parseInt(peOpt.dataset.strike || 0) : 0;
   }
 
   const eodChecked = document.getElementById('cfg-eod-' + key).checked;
@@ -448,8 +453,8 @@ async function saveConfig(key) {
     tradeDirection:  direction,
     futureSymbol:    futSel.value,
     futureToken,
-    ceSymbol,  ceToken,
-    peSymbol,  peToken,
+    ceSymbol,  ceToken,  ceStrikePrice,
+    peSymbol,  peToken,  peStrikePrice,
     expiryType:      expiry,
     entryStartTime:  startTimeSel.value,
     strikeMode:      strikeMode === 'AUTO_ATM' ? 'AUTO' : 'MANUAL',
@@ -662,6 +667,11 @@ function renderSession(key, s) {
   renderCandle(s.secondCandle || null, 'c2-' + key);
   renderCandle(s.thirdCandle  || null, 'c3-' + key);
 
+  // Breakout-only: per-leg (CE/PE) reference candle with High/Low. No-op on non-breakout
+  // cards since the ref-ce-/ref-pe- elements don't exist there (getElementById → null).
+  renderReferenceCandle(s.ceReferenceCandle || null, 'ref-ce-' + key, 'CE', s.lockedCeStrike);
+  renderReferenceCandle(s.peReferenceCandle || null, 'ref-pe-' + key, 'PE', s.lockedPeStrike);
+
   const realized = s.cumulativePnL          || 0;
   const openPnl  = s.currentLegUnrealizedPnL || 0;
   const total    = s.totalPnL               || 0;
@@ -836,6 +846,32 @@ function renderCandle(candle, prefix) {
   }
   if (closeEl) closeEl.textContent = fmt(candle.close);
   if (timeEl)  timeEl.textContent  = candle.time ? formatTime(candle.time) : '';
+}
+
+// Per-leg breakout reference candle (CE/PE shown separately, includes High/Low).
+// `strike` is the locked strike for that leg (e.g. 21000) — shown alongside the option type
+// so the user can see exactly which contract's candle this is, per their request.
+function renderReferenceCandle(candle, prefix, optionType, strike) {
+  const labelEl = document.getElementById(prefix + '-label');
+  const closeEl = document.getElementById(prefix + '-close');
+  const hlEl    = document.getElementById(prefix + '-hl');
+  const timeEl  = document.getElementById(prefix + '-time');
+
+  if (labelEl) labelEl.textContent = strike ? `${optionType} ${strike}` : `${optionType} —`;
+
+  if (!candle) {
+    if (closeEl) closeEl.textContent = '—';
+    if (hlEl)    hlEl.textContent    = 'H: — · L: —';
+    if (timeEl)  timeEl.textContent  = '';
+    return;
+  }
+  if (closeEl) closeEl.textContent = fmt(candle.close);
+  if (hlEl) {
+    const h = candle.high != null ? fmt(candle.high) : '—';
+    const l = candle.low  != null ? fmt(candle.low)  : '—';
+    hlEl.textContent = `H: ${h} · L: ${l}`;
+  }
+  if (timeEl) timeEl.textContent = candle.time ? formatTime(candle.time) : '';
 }
 
 function renderHistory(key, rows) {
@@ -1398,6 +1434,24 @@ function buildCardHtml(s) {
         </div>
       </div>
     </div>
+${s.breakout ? `
+    <div class="candle-section admin-only" id="ref-candle-section-${k}">
+      <h4>Reference Candle (High / Low per Leg)</h4>
+      <div class="candle-row">
+        <div class="candle-box ce-card">
+          <div class="c-label" id="ref-ce-label-${k}">CE —</div>
+          <div class="c-value" id="ref-ce-${k}-close">—</div>
+          <div class="c-hl" id="ref-ce-${k}-hl">H: — · L: —</div>
+          <div class="c-time" id="ref-ce-${k}-time"></div>
+        </div>
+        <div class="candle-box pe-card">
+          <div class="c-label" id="ref-pe-label-${k}">PE —</div>
+          <div class="c-value" id="ref-pe-${k}-close">—</div>
+          <div class="c-hl" id="ref-pe-${k}-hl">H: — · L: —</div>
+          <div class="c-time" id="ref-pe-${k}-time"></div>
+        </div>
+      </div>
+    </div>` : ''}
 
     <div id="stop-reason-box-${k}" class="stop-reason hidden">
       <span id="stop-reason-text-${k}"></span>

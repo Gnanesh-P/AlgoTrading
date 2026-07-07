@@ -51,6 +51,14 @@ public class AlgoStatusResponse {
     private String  lockedCeInstrument;
     private String  lockedPeInstrument;
     private String  lockedExpiryLabel;   // "Current Week (29 Apr)" | "Next Week (06 May)"
+    private int     lockedCeStrike;      // e.g. 21000
+    private int     lockedPeStrike;      // e.g. 20000
+    // Per-leg breakout reference candle (the 1st 5-min candle after entryStartTime) —
+    // populated once each leg's own reference candle has closed. Distinct from the
+    // generic firstCandle/secondCandle/thirdCandle above (which reflect whichever leg
+    // closed most recently) so the UI can show CE and PE High/Low side by side.
+    private CandleInfo ceReferenceCandle;
+    private CandleInfo peReferenceCandle;
 
     @Data
     @Builder
@@ -59,6 +67,8 @@ public class AlgoStatusResponse {
     public static class CandleInfo {
         private double close;
         private String time;             // "HH:mm"
+        private Double high;
+        private Double low;
     }
 
     @Data

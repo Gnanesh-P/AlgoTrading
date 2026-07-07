@@ -102,8 +102,8 @@ public class AlgoController {
                 .futuresInstrument(req.getFutureSymbol())
                 .ceInstrument(req.getCeSymbol())
                 .peInstrument(req.getPeSymbol())
-                .ceStrikePrice(0)
-                .peStrikePrice(0)
+                .ceStrikePrice(req.getCeStrikePrice())
+                .peStrikePrice(req.getPeStrikePrice())
                 .expiryType(req.getExpiryType() != null
                         ? ExpiryType.valueOf(req.getExpiryType())
                         : ExpiryType.CURRENT_WEEK)

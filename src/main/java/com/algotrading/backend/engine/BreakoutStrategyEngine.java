@@ -886,6 +886,10 @@ public class BreakoutStrategyEngine implements TradingEngine {
                 .lockedCeInstrument(session.getLockedCeInstrument())
                 .lockedPeInstrument(session.getLockedPeInstrument())
                 .lockedExpiryLabel(session.getLockedExpiryLabel())
+                .lockedCeStrike(session.getLockedCeStrike())
+                .lockedPeStrike(session.getLockedPeStrike())
+                .ceReferenceCandle(toCandleInfo(session.getLegReferenceCandles().get(OptionType.CE.name())))
+                .peReferenceCandle(toCandleInfo(session.getLegReferenceCandles().get(OptionType.PE.name())))
                 .build();
     }
 
@@ -893,7 +897,12 @@ public class BreakoutStrategyEngine implements TradingEngine {
         if (c == null) return null;
         String t = c.getOpenTime() != null
                 ? c.getOpenTime().toLocalTime().toString().substring(0, 5) : null;
-        return AlgoStatusResponse.CandleInfo.builder().close(c.getClose()).time(t).build();
+        return AlgoStatusResponse.CandleInfo.builder()
+                .close(c.getClose())
+                .time(t)
+                .high(c.getHigh())
+                .low(c.getLow())
+                .build();
     }
 
     private String resolveStopStatus(String reason) {
