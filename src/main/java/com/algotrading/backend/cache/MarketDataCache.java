@@ -6,7 +6,9 @@ import com.algotrading.backend.model.TradeSession;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
+import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Deque;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -22,8 +24,13 @@ public class MarketDataCache {
     // Latest tick per instrument: instrument -> MarketTick
     private final Map<String, MarketTick> latestTicks = new ConcurrentHashMap<>();
 
-    // Historical ticks per instrument (last 200 ticks for candle building)
-    private final Map<String, List<MarketTick>> tickHistory = new ConcurrentHashMap<>();
+    // Historical ticks per instrument (last 1000 ticks for candle building).
+    // ArrayDeque instead of ArrayList: eviction below is O(1) (removeFirst) instead of the
+    // O(n) shift that ArrayList.remove(0) does on every tick once the deque is full — with a
+    // WebSocket ticker pushing ticks multiple times/sec across several subscribed instruments,
+    // that per-tick O(n) cost was a real (if secondary) contributor to the "server gets slower
+    // the longer a strategy runs" symptom (see SchedulingConfig for the primary root cause).
+    private final Map<String, Deque<MarketTick>> tickHistory = new ConcurrentHashMap<>();
 
     // Current trading configuration
     private volatile TradingConfig currentConfig;
@@ -35,13 +42,13 @@ public class MarketDataCache {
 
     public void updateTick(MarketTick tick) {
         latestTicks.put(tick.getInstrument(), tick);
-        tickHistory.computeIfAbsent(tick.getInstrument(), k -> new ArrayList<>());
-        List<MarketTick> history = tickHistory.get(tick.getInstrument());
+        tickHistory.computeIfAbsent(tick.getInstrument(), k -> new ArrayDeque<>());
+        Deque<MarketTick> history = tickHistory.get(tick.getInstrument());
         synchronized (history) {
-            history.add(tick);
+            history.addLast(tick);
             // Keep last 1000 ticks to bound memory
             if (history.size() > 1000) {
-                history.remove(0);
+                history.removeFirst();
             }
         }
 //        log.debug("Tick updated: {} @ {}", tick.getInstrument(), tick.getLastPrice());
@@ -52,7 +59,8 @@ public class MarketDataCache {
     }
 
     public List<MarketTick> getTickHistory(String instrument) {
-        return tickHistory.getOrDefault(instrument, new ArrayList<>());
+        Deque<MarketTick> history = tickHistory.get(instrument);
+        return history != null ? new ArrayList<>(history) : new ArrayList<>();
     }
 
     public double getLastPrice(String instrument) {

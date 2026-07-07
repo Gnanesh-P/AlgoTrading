@@ -150,7 +150,7 @@ public class BreakoutStrategyEngine implements TradingEngine {
 
         OptionType leg = instrument.equals(ceInstr) ? OptionType.CE : OptionType.PE;
         Integer count = legCandleCount.get(leg.name());
-        if (count == null || count < 2) return; // reference not yet formed for this leg
+        if (count == null || count < 1) return; // reference (1st candle) not yet closed for this leg
 
         Candle ref = session.getLegReferenceCandles().get(leg.name());
         if (ref == null) return;
@@ -197,16 +197,19 @@ public class BreakoutStrategyEngine implements TradingEngine {
 
         LocalDateTime now = LocalDateTime.now(ZoneId.of("Asia/Kolkata"));
 
-        // Gate candle formation on the user-selected start time. E.g. start=9:15 means the
-        // first 5-min candle is [9:15:00, 9:20:00) — ticks before 9:15 are ignored entirely so
-        // "candle 1" always begins exactly at the selected (5-min-aligned) start time.
+        // Gate candle formation on the user-selected start time. E.g. start=13:00 means the
+        // first 5-min candle (the breakout REFERENCE window) is exactly [13:00:00, 13:04:59] —
+        // ticks before start time are ignored entirely so "candle 1" always begins exactly at the
+        // selected start time, regardless of whether that time falls on a wall-clock :00/:05 mark.
         TradingConfig cfg = session.getConfig();
         LocalTime startTime = cfg != null ? cfg.getStartCandleTime() : null;
         if (startTime != null && now.toLocalTime().isBefore(startTime)) {
             return;
         }
 
-        LocalDateTime bucketStart = floorToBucket(now);
+        LocalDateTime bucketStart = startTime != null
+                ? floorToBucket(now, startTime, session.getTradeDate())
+                : floorToBucket(now);
 
         Candle forming = formingCandles.get(instrument);
         if (forming == null) {
@@ -226,6 +229,19 @@ public class BreakoutStrategyEngine implements TradingEngine {
         }
     }
 
+    /**
+     * Anchors 5-min candle boundaries to the user's configured start time (not absolute wall-clock
+     * :00/:05 marks). e.g. start=13:00 → buckets are [13:00,13:05), [13:05,13:10), ...
+     * start=13:02 → buckets are [13:02,13:07), [13:07,13:12), ... — always start-time-relative.
+     */
+    private LocalDateTime floorToBucket(LocalDateTime now, LocalTime startTime, LocalDate tradeDate) {
+        LocalDateTime start = LocalDateTime.of(tradeDate, startTime);
+        long minutesSinceStart = java.time.Duration.between(start, now).toMinutes();
+        long bucketIndex = Math.floorDiv(minutesSinceStart, CANDLE_MINUTES);
+        return start.plusMinutes(bucketIndex * CANDLE_MINUTES);
+    }
+
+    /** Fallback wall-clock flooring — only used if startCandleTime is somehow unset. */
     private LocalDateTime floorToBucket(LocalDateTime t) {
         int minute = t.getMinute();
         int flooredMinute = (minute / CANDLE_MINUTES) * CANDLE_MINUTES;
@@ -407,28 +423,51 @@ public class BreakoutStrategyEngine implements TradingEngine {
         updateOpenPnL();
 
         int count = legCandleCount.merge(leg.name(), 1, Integer::sum);
+        updateCandleDisplaySlots(count, candle);
+
         if (count == 1) {
-            log.info("[{}][BREAKOUT] {} 1st candle: close={}", username, leg, candle.getClose());
-            persistAndBroadcast();
-            return;
-        }
-        if (count == 2) {
+            // The FIRST 5-min candle starting exactly at the configured start time is the
+            // breakout reference window (e.g. start=13:00 → reference window = 13:00–13:04:59).
+            // Every subsequent candle's High (BUY) / Low (SELL) is checked against THIS window's
+            // High/Low — not the 2nd candle. checkBreakoutOnTick() starts evaluating ticks against
+            // this reference immediately (gate is count>=1), so the very next forming candle
+            // (13:05–13:09:59 onward) can trigger entry the instant price breaks out intrabar.
             session.getLegReferenceCandles().put(leg.name(), candle);
-            log.info("[{}][BREAKOUT] {} 2nd candle (reference): high={} low={}",
-                    username, leg, candle.getHigh(), candle.getLow());
+            log.info("[{}][BREAKOUT] {} 1st candle (reference window {}–{}): high={} low={}",
+                    username, leg, candle.getOpenTime(), candle.getCloseTime(), candle.getHigh(), candle.getLow());
             persistAndBroadcast();
             return;
         }
 
-        // From the 3rd candle onward, actual breakout entry/reversal detection happens intrabar
+        // From the 2nd candle onward, actual breakout entry/reversal detection happens intrabar
         // via checkBreakoutOnTick() on every tick (as soon as price crosses the leg's reference
         // High/Low), not here at candle close — that way a breakout that happens mid-candle
-        // (e.g. at 9:27:40) is acted on immediately instead of waiting for the candle to close
-        // at 9:30. This handler now just logs the closed candle and re-checks Target/SL/Trailing.
+        // (e.g. at 13:07:40) is acted on immediately instead of waiting for the candle to close
+        // at 13:10. This handler now just logs the closed candle and re-checks Target/SL/Trailing.
         log.debug("[{}][BREAKOUT] {} candle #{} closed: high={} low={} close={}",
                 username, leg, count, candle.getHigh(), candle.getLow(), candle.getClose());
         checkExitConditions();
         persistAndBroadcast();
+    }
+
+    /**
+     * Mirrors the closed candle into TradeSession's generic first/second/third candle slots so
+     * the (single, strategy-agnostic) UI candle display shows live data for the breakout strategy
+     * too — previously these were never populated for breakout sessions, so the candle boxes and
+     * (via a separate fix) the start-time chip always appeared blank even though ticks/candles
+     * were being processed correctly under the hood. CE and PE close on the same wall-clock
+     * boundaries, so whichever leg's candle closes is shown; not leg-specific, just a live
+     * "is data flowing" signal — legReferenceCandles remains the authoritative per-leg reference.
+     */
+    private void updateCandleDisplaySlots(int count, Candle candle) {
+        if (count == 1) {
+            session.setFirstCandle(candle);
+        } else if (count == 2) {
+            session.setSecondCandle(candle);
+        } else {
+            session.setThirdCandle(candle);
+        }
+        session.setLastClosedCandle(candle);
     }
 
     private void persistAndBroadcast() {
@@ -833,17 +872,28 @@ public class BreakoutStrategyEngine implements TradingEngine {
                 .trailingHighWatermark(session.getTrailingHighWatermark())
                 .squareOffEod(cfg.isSquareOffEod())
                 .paperTrade(cfg.getTradeMode() == TradeMode.PAPER)
+                .entryStartTime(cfg.getStartCandleTime() != null ? cfg.getStartCandleTime().toString() : null)
                 .strikeMode(cfg.getStrikeMode() != null ? cfg.getStrikeMode().name() : null)
                 .lotQuantity(cfg.getLotQuantity())
                 .totalQuantity(cfg.getTotalQuantity())
                 .startTime(session.getStartTime())
                 .endTime(session.getEndTime())
                 .stopReason(session.getStopReason())
+                .firstCandle(toCandleInfo(session.getFirstCandle()))
+                .secondCandle(toCandleInfo(session.getSecondCandle()))
+                .thirdCandle(toCandleInfo(session.getThirdCandle()))
                 .history(history)
                 .lockedCeInstrument(session.getLockedCeInstrument())
                 .lockedPeInstrument(session.getLockedPeInstrument())
                 .lockedExpiryLabel(session.getLockedExpiryLabel())
                 .build();
+    }
+
+    private AlgoStatusResponse.CandleInfo toCandleInfo(Candle c) {
+        if (c == null) return null;
+        String t = c.getOpenTime() != null
+                ? c.getOpenTime().toLocalTime().toString().substring(0, 5) : null;
+        return AlgoStatusResponse.CandleInfo.builder().close(c.getClose()).time(t).build();
     }
 
     private String resolveStopStatus(String reason) {

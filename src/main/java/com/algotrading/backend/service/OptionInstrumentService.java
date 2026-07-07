@@ -31,6 +31,18 @@ public class OptionInstrumentService {
                 ? BANKNIFTY_STRIKE_GAP : NIFTY_STRIKE_GAP;
     }
 
+    /**
+     * Strike step for a trading session, preferring the authoritative {@code config.strategyKey}
+     * (set from which strategy card the user started — always correct) over sniffing the
+     * futuresInstrument text, which is fragile: e.g. when Kite isn't connected yet the futures
+     * dropdown only offers the synthetic spot-index placeholder "NIFTY BANK", which does NOT
+     * contain the substring "BANKNIFTY" and silently produced a 50-point (NIFTY) step instead
+     * of the correct 100-point Bank Nifty step.
+     */
+    public int strikeStepFor(TradingConfig config) {
+        return config.isBankNifty() ? BANKNIFTY_STRIKE_GAP : NIFTY_STRIKE_GAP;
+    }
+
     private static final Set<LocalDate> NSE_HOLIDAYS = Set.of(
         LocalDate.of(2026, 1, 26),
         LocalDate.of(2026, 2, 19),
@@ -108,8 +120,8 @@ public class OptionInstrumentService {
             String expiryLabel = (isNextWeek ? "Next Week" : "Current Week")
                     + " (" + autoExpiry.format(DateTimeFormatter.ofPattern("dd MMM", Locale.ENGLISH)) + ")";
 
-            int strikeStep = strikeStepFor(config.getFuturesInstrument());
-            String indexPrefix = strikeStep == BANKNIFTY_STRIKE_GAP ? "BANKNIFTY" : "NIFTY";
+            int strikeStep = strikeStepFor(config);
+            String indexPrefix = config.isBankNifty() ? "BANKNIFTY" : "NIFTY";
 
             int ceStrike = computeCeStrike(currentNiftyPrice, strikeStep);
             int peStrike = computePeStrike(currentNiftyPrice, strikeStep);

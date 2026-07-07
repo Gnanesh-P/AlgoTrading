@@ -419,8 +419,11 @@ public class ScalpingStrategyEngine implements TradingEngine {
     }
 
     private String indexPrefix() {
-        String futures = session.getConfig().getFuturesInstrument();
-        return (futures != null && futures.toUpperCase().contains("BANKNIFTY")) ? "BANKNIFTY" : "NIFTY";
+        // Prefer the authoritative strategyKey over sniffing futuresInstrument text — the latter
+        // silently fell back to NIFTY when the futures dropdown hadn't resolved a real Kite
+        // tradingsymbol yet (e.g. Kite not connected → dropdown only offers the synthetic
+        // spot-index placeholder "NIFTY BANK", which does not contain "BANKNIFTY").
+        return session.getConfig().isBankNifty() ? "BANKNIFTY" : "NIFTY";
     }
 
     public synchronized TradeSession startSession(TradingConfig config,

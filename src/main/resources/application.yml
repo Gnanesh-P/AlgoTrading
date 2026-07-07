@@ -73,6 +73,11 @@ proxy:
 
 logging:
   level:
-    com.algotrading: DEBUG
+    # DEBUG was previously always-on in production, which is expensive across every scheduled
+    # poll/tick/broadcast path (log formatting + synchronous file/console I/O on every call) and
+    # was a contributing factor to the reported slowdown-over-time. INFO is enough for normal
+    # operation; flip back to DEBUG (e.g. via SPRING_APPLICATION_JSON or an env-specific profile)
+    # only when actively diagnosing an issue.
+    com.algotrading: INFO
     org.springframework.security: WARN
     org.springframework.web.socket.config.WebSocketMessageBrokerStats: OFF
