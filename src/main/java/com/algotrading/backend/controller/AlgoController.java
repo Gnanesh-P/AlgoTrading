@@ -146,8 +146,11 @@ public class AlgoController {
             log.warn("[{}] No instruments subscribed — candle ticks will not arrive!", startedBy);
         }
 
-        candleAggregator.resetAll();
-        tickerService.unsubscribeAll();
+        // NOTE: do NOT call tickerService.unsubscribeAll() here — KiteTickerService is a single
+        // global WebSocket shared across every user/strategy. Wiping all subscriptions on every
+        // /algo/start would drop tick delivery for any other already-running engine (e.g. starting
+        // BANKNIFTY_SCALP would kill ticks for an already-running NIFTY_SCALP/NIFTY_BREAKOUT
+        // session). subscribe() merges tokens additively, so it's safe to call on its own.
         if (!instruments.isEmpty()) {
             tickerService.subscribe(instruments);
         }

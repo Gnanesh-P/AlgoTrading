@@ -171,10 +171,17 @@ public class TradingEngineRegistry {
 
     public void routeTickToActiveEngines(MarketTick tick) {
         engines.values().forEach(engine -> {
-            TradeSession s = engine.getSession();
-            if (s == null || s.getConfig() == null) return;
-            if (s.getState() == StrategyState.STOPPED || s.getState() == StrategyState.IDLE) return;
-            engine.processTick(tick);
+            try {
+                TradeSession s = engine.getSession();
+                if (s == null || s.getConfig() == null) return;
+                if (s.getState() == StrategyState.STOPPED || s.getState() == StrategyState.IDLE) return;
+                engine.processTick(tick);
+            } catch (Exception e) {
+                // Isolate failures: one engine's exception must never block tick delivery
+                // to the other concurrently-running engines for this same tick.
+                log.error("[{}/{}] Uncaught error processing tick for {}: {}",
+                        engine.getUsername(), engine.getStrategyKey(), tick.getInstrument(), e.getMessage(), e);
+            }
         });
     }
 

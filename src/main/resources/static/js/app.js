@@ -1414,8 +1414,9 @@ function buildCardHtml(s) {
       </div>
     </div>
 
+${!s.breakout ? `
     <div class="candle-section admin-only">
-      <h4>${s.breakout ? '5-Min Candles' : '1-Min Candles'}</h4>
+      <h4>1-Min Candles</h4>
       <div class="candle-row">
         <div class="candle-box">
           <div class="c-label">1st</div>
@@ -1433,7 +1434,7 @@ function buildCardHtml(s) {
           <div class="c-time" id="c3-${k}-time"></div>
         </div>
       </div>
-    </div>
+    </div>` : ''}
 ${s.breakout ? `
     <div class="candle-section admin-only" id="ref-candle-section-${k}">
       <h4>Reference Candle (High / Low per Leg)</h4>
