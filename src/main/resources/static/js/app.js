@@ -10,14 +10,19 @@ const STRATEGIES = [
   { key: 'BANKNIFTY_BREAKOUT', title: 'Bank Nifty Breakout',     subtitle: '5-Min Breakout · BANKNIFTY', icon: '💥', index: 'BANKNIFTY', manualStrike: true,  breakout: true  },
 ];
 
-// Group cards by underlying index for the tabbed layout below.
+// Groups the sidebar nav into two sections, one per underlying index.
 const STRATEGY_GROUPS = [
-  { key: 'NIFTY',     title: 'NIFTY',     icon: '⚡' },
+  { key: 'NIFTY',     title: 'NIFTY',      icon: '⚡' },
   { key: 'BANKNIFTY', title: 'BANK NIFTY', icon: '🏦' },
 ];
 
 // Per-key runtime state: { currentSession, savedConfig, pnlFrozen }
 const cardState = {};
+
+// Which strategy's full card is currently shown in the detail panel. All 4 cards stay mounted
+// in the DOM (so status polling/WebSocket updates keep every strategy live in the background) —
+// selecting a sidebar item just toggles which one is visible.
+let selectedStrategy = null;
 
 function isAdmin() {
   return localStorage.getItem('userRole') === 'GNANESH';
@@ -54,20 +59,19 @@ window.onload = () => {
 };
 
 function init() {
-  const grid = document.getElementById('cards-grid');
-  grid.innerHTML = STRATEGIES.map(buildCardHtml).join('');
+  const detail = document.getElementById('strategy-detail');
+  detail.innerHTML = STRATEGIES.map(buildCardHtml).join('');
 
-  const overviewEl = document.getElementById('overview-strip');
-  if (overviewEl) overviewEl.innerHTML = buildOverviewStrip();
+  const sidebar = document.getElementById('strategy-sidebar');
+  if (sidebar) sidebar.innerHTML = buildSidebarHtml();
 
   STRATEGIES.forEach(s => {
     cardState[s.key] = { currentSession: null, savedConfig: null, pnlFrozen: false };
-    // Cards default to collapsed so 4 concurrent strategies stay manageable on one screen —
-    // whichever ones are actually running get auto-expanded once the first status poll lands
-    // (see fetchAndRenderStatusAll). A user's manual expand/collapse always wins after that.
-    const stored = localStorage.getItem('cardCollapsed_' + s.key);
-    setCardCollapsed(s.key, stored === null ? true : stored === '1', false);
   });
+
+  // Restore the last-viewed strategy (per browser), falling back to the first card.
+  const stored = localStorage.getItem('selectedStrategy');
+  selectStrategy(STRATEGIES.some(s => s.key === stored) ? stored : STRATEGIES[0].key);
 
   applyRoleVisibility();
   connectWebSocket();
@@ -580,6 +584,7 @@ async function fetchAndRenderStatusAll() {
     (list || []).forEach(s => { byKey[s.strategyKey] = s; });
 
     let runningCount = 0;
+    let firstActiveKey = null;
     STRATEGIES.forEach(strat => {
       const key = strat.key;
       setStrategyButtonsLoading(key, false);
@@ -589,18 +594,19 @@ async function fetchAndRenderStatusAll() {
         renderSession(key, s);
         if (s.active) {
           runningCount++;
-          // Auto-expand only once, on the very first poll after page load (e.g. a strategy
-          // was already running before this page load/refresh) — and only if the user hasn't
-          // ever explicitly chosen a collapse state for this card. Never fires again after
-          // that so it can't fight a manual toggle made later in the session.
-          if (!firstStatusPollDone && localStorage.getItem('cardCollapsed_' + key) === null) {
-            setCardCollapsed(key, false, false);
-          }
+          if (!firstActiveKey) firstActiveKey = key;
         }
       } else if (!s) {
         renderIdleCard(key);
       }
     });
+
+    // On the very first poll after page load, if the user has never picked a strategy to view
+    // (fresh browser/localStorage) and exactly one is already running, jump straight to it.
+    if (!firstStatusPollDone && localStorage.getItem('selectedStrategy') === null
+        && runningCount === 1 && firstActiveKey) {
+      selectStrategy(firstActiveKey);
+    }
     firstStatusPollDone = true;
 
     const badge = document.getElementById('running-badge');
@@ -616,12 +622,14 @@ function renderIdleCard(key) {
   if (startBtn) startBtn.disabled = false;
   if (stopBtn)  stopBtn.disabled  = true;
 
-  const ovDot = document.getElementById('ov-dot-' + key);
-  if (ovDot) ovDot.className = 'oc-dot oc-dot-idle';
-  const ovPnl = document.getElementById('ov-pnl-' + key);
-  if (ovPnl) { ovPnl.textContent = '₹0.00'; ovPnl.classList.remove('oc-pnl-pos', 'oc-pnl-neg'); }
-  const headerPnl = document.getElementById('card-pnl-pill-' + key);
-  if (headerPnl) { headerPnl.textContent = '₹0.00'; headerPnl.classList.remove('pnl-pos', 'pnl-neg'); }
+  const sideItem = document.getElementById('side-item-' + key);
+  if (sideItem) sideItem.classList.remove('is-live');
+  const sideDot = document.getElementById('side-dot-' + key);
+  if (sideDot) sideDot.className = 'side-dot side-dot-idle';
+  const sideStatus = document.getElementById('side-status-' + key);
+  if (sideStatus) sideStatus.textContent = 'IDLE';
+  const sidePnl = document.getElementById('side-pnl-' + key);
+  if (sidePnl) { sidePnl.textContent = '₹0.00'; sidePnl.classList.remove('side-pnl-pos', 'side-pnl-neg'); }
 }
 
 function renderSession(key, s) {
@@ -717,19 +725,17 @@ function renderSession(key, s) {
   setAmount('pnl-total-' + key,    total, true);
 
   const pnlText = (total >= 0 ? '₹' : '-₹') + fmt(Math.abs(total));
-  const headerPnl = document.getElementById('card-pnl-pill-' + key);
-  if (headerPnl) {
-    headerPnl.textContent = pnlText;
-    headerPnl.classList.toggle('pnl-pos', total >= 0);
-    headerPnl.classList.toggle('pnl-neg', total < 0);
-  }
-  const ovDot = document.getElementById('ov-dot-' + key);
-  if (ovDot) ovDot.className = 'oc-dot oc-dot-' + status.toLowerCase().replace(/_/g, '');
-  const ovPnl = document.getElementById('ov-pnl-' + key);
-  if (ovPnl) {
-    ovPnl.textContent = pnlText;
-    ovPnl.classList.toggle('oc-pnl-pos', total >= 0);
-    ovPnl.classList.toggle('oc-pnl-neg', total < 0);
+  const sideItem = document.getElementById('side-item-' + key);
+  if (sideItem) sideItem.classList.toggle('is-live', !!s.active);
+  const sideDot = document.getElementById('side-dot-' + key);
+  if (sideDot) sideDot.className = 'side-dot side-dot-' + status.toLowerCase().replace(/_/g, '');
+  const sideStatus = document.getElementById('side-status-' + key);
+  if (sideStatus) sideStatus.textContent = status;
+  const sidePnl = document.getElementById('side-pnl-' + key);
+  if (sidePnl) {
+    sidePnl.textContent = pnlText;
+    sidePnl.classList.toggle('side-pnl-pos', total >= 0);
+    sidePnl.classList.toggle('side-pnl-neg', total < 0);
   }
   const pnlTargetEl = document.getElementById('pnl-target-' + key);
   const pnlSlEl     = document.getElementById('pnl-sl-' + key);
@@ -1216,48 +1222,47 @@ function escapeHtml(str) {
     .replace(/"/g, '&quot;');
 }
 
-// ===== COLLAPSIBLE CARDS + OVERVIEW STRIP =====
-// With 4 concurrent strategies, showing every card's full config/candles/trade-log at once
-// gets unwieldy. Cards collapse to just their header (icon, title, live P&L, status badge) by
-// default; the overview strip stays visible above the grid as a permanent at-a-glance summary
-// of all 4, and clicking a chip jumps straight to (and expands) that strategy's card.
+// ===== SIDEBAR NAV + MASTER-DETAIL SWITCHING =====
+// Instead of showing 4 full cards at once (grid) or collapsing them into an accordion, this
+// design keeps a persistent left-hand nav listing all 4 strategies (icon, live status, P&L),
+// and only ever renders ONE full strategy card in the main detail panel at a time — selected
+// by clicking a nav item. All 4 cards stay mounted (hidden via CSS) so status polling/WebSocket
+// updates keep every strategy live in the background regardless of which one is on screen.
 
-function toggleCard(key) {
-  const card = document.getElementById('card-' + key);
-  if (!card) return;
-  setCardCollapsed(key, !card.classList.contains('collapsed'), true);
+function selectStrategy(key) {
+  selectedStrategy = key;
+  localStorage.setItem('selectedStrategy', key);
+
+  STRATEGIES.forEach(s => {
+    const card = document.getElementById('card-' + s.key);
+    const item = document.getElementById('side-item-' + s.key);
+    const isActive = s.key === key;
+    if (card) card.classList.toggle('active-view', isActive);
+    if (item) item.classList.toggle('active', isActive);
+  });
+
+  const detail = document.getElementById('strategy-detail');
+  if (detail) detail.scrollTop = 0;
 }
 
-function setCardCollapsed(key, collapsed, userInitiated) {
-  const card = document.getElementById('card-' + key);
-  if (!card) return;
-  card.classList.toggle('collapsed', collapsed);
-  const btn = document.getElementById('card-expand-btn-' + key);
-  if (btn) btn.textContent = collapsed ? '▾' : '▴';
-  if (userInitiated) {
-    localStorage.setItem('cardCollapsed_' + key, collapsed ? '1' : '0');
-  }
-}
-
-function scrollToCard(key) {
-  setCardCollapsed(key, false, true);
-  const card = document.getElementById('card-' + key);
-  if (card) card.scrollIntoView({ behavior: 'smooth', block: 'start' });
-}
-
-function buildOverviewStrip() {
+function buildSidebarHtml() {
   return STRATEGY_GROUPS.map(g => {
-    const chips = STRATEGIES.filter(s => s.index === g.key).map(s => `
-        <div class="overview-chip" id="ov-chip-${s.key}" onclick="scrollToCard('${s.key}')">
-          <span class="oc-icon">${s.icon}</span>
-          <span class="oc-name">${s.breakout ? 'Breakout' : 'Scalp'}</span>
-          <span class="oc-dot oc-dot-idle" id="ov-dot-${s.key}"></span>
-          <span class="oc-pnl" id="ov-pnl-${s.key}">₹0.00</span>
+    const items = STRATEGIES.filter(s => s.index === g.key).map(s => `
+        <div class="side-item" id="side-item-${s.key}" onclick="selectStrategy('${s.key}')">
+          <span class="side-item-icon">${s.icon}</span>
+          <div class="side-item-main">
+            <div class="side-item-title">${s.breakout ? 'Breakout' : 'Scalping'}</div>
+            <div class="side-item-sub">
+              <span class="side-dot side-dot-idle" id="side-dot-${s.key}"></span>
+              <span id="side-status-${s.key}">IDLE</span>
+            </div>
+          </div>
+          <div class="side-item-pnl" id="side-pnl-${s.key}">₹0.00</div>
         </div>`).join('');
     return `
-      <div class="overview-group">
-        <span class="overview-group-label">${g.icon} ${g.title}</span>
-        ${chips}
+      <div class="side-group">
+        <div class="side-group-label">${g.icon} ${g.title}</div>
+        ${items}
       </div>`;
   }).join('');
 }
@@ -1318,8 +1323,8 @@ function buildCardHtml(s) {
         </div>` : '';
 
   return `
-  <div class="panel strategy-card collapsed" id="card-${k}">
-    <div class="card-header" onclick="toggleCard('${k}')">
+  <div class="panel strategy-card" id="card-${k}">
+    <div class="card-header">
       <div class="card-title-group">
         <span class="card-icon">${s.icon}</span>
         <div>
@@ -1327,14 +1332,9 @@ function buildCardHtml(s) {
           <div class="card-subtitle">${s.subtitle}</div>
         </div>
       </div>
-      <div class="card-header-right">
-        <span class="card-header-pnl" id="card-pnl-pill-${k}">₹0.00</span>
-        <span id="strategy-badge-${k}" class="badge badge-idle">IDLE</span>
-        <span class="card-expand-btn" id="card-expand-btn-${k}">▾</span>
-      </div>
+      <span id="strategy-badge-${k}" class="badge badge-idle">IDLE</span>
     </div>
 
-    <div class="card-body" id="card-body-${k}">
     <details class="card-config">
       <summary>Configuration</summary>
       <div class="form-row">
@@ -1614,7 +1614,6 @@ ${s.breakout ? `
       </div>
       <div class="usc-date" id="usc-date-${k}">—</div>
       <div class="usc-note">Trade details are managed by the system. Contact admin for a full report.</div>
-    </div>
     </div>
   </div>`;
 }
