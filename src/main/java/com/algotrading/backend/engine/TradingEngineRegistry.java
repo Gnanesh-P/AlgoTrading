@@ -142,10 +142,11 @@ public class TradingEngineRegistry {
     }
 
     private TradingEngine buildEngine(PlatformUser user, StrategyKey strategyKey) {
-        if (strategyKey == StrategyKey.NIFTY_BREAKOUT) {
+        if (strategyKey == StrategyKey.NIFTY_BREAKOUT || strategyKey == StrategyKey.BANKNIFTY_BREAKOUT) {
             return new BreakoutStrategyEngine(
                     telegramService,
                     user,
+                    strategyKey,
                     kiteConnect,
                     globalCache,
                     optionInstrumentService,

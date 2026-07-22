@@ -15,7 +15,7 @@
   <nav class="topnav">
     <div class="nav-left">
       <span class="logo-sm">📈 PilotX</span>
-      <span id="running-badge" class="price-badge">0 / 3 Running</span>
+      <span id="running-badge" class="price-badge">0 / 4 Running</span>
     </div>
     <div class="nav-right">
       <span id="kite-status-badge" class="badge badge-disconnected">Kite: Not Connected</span>
@@ -43,6 +43,9 @@
       <button id="btn-set-token" class="btn btn-sm btn-outline" onclick="setManualToken()">Set Token</button>
     </div>
   </div>
+
+  <!-- OVERVIEW STRIP: at-a-glance status/P&L for all strategies, grouped by index -->
+  <div class="overview-strip" id="overview-strip"></div>
 
   <!-- STRATEGY CARDS (injected by app.js, one per StrategyKey) -->
   <div class="cards-grid" id="cards-grid"></div>

@@ -51,12 +51,11 @@ public class BreakoutStrategyEngine implements TradingEngine {
     private static final Logger log = LoggerFactory.getLogger(BreakoutStrategyEngine.class);
     private static final DateTimeFormatter IST_FMT = DateTimeFormatter.ofPattern("dd-MMM-yyyy HH:mm:ss");
     private static final int CANDLE_MINUTES = 5;
-    private static final int NIFTY_STRIKE_STEP = 50;
 
     @Getter
     private final String username;
     @Getter
-    private final StrategyKey strategyKey = StrategyKey.NIFTY_BREAKOUT;
+    private final StrategyKey strategyKey;
     private final PlatformUser platformUser;
     private final TelegramService telegramService;
 
@@ -83,6 +82,7 @@ public class BreakoutStrategyEngine implements TradingEngine {
 
     public BreakoutStrategyEngine(TelegramService telegramService,
                                    PlatformUser platformUser,
+                                   StrategyKey strategyKey,
                                    KiteConnect kiteConnect,
                                    MarketDataCache globalCache,
                                    OptionInstrumentService optionInstrumentService,
@@ -94,6 +94,7 @@ public class BreakoutStrategyEngine implements TradingEngine {
         this.telegramService = telegramService;
         this.platformUser = platformUser;
         this.username = platformUser.getUsername();
+        this.strategyKey = strategyKey;
         this.kiteConnect = kiteConnect;
         this.globalCache = globalCache;
         this.optionInstrumentService = optionInstrumentService;
@@ -261,7 +262,7 @@ public class BreakoutStrategyEngine implements TradingEngine {
     public synchronized TradeSession startSession(TradingConfig config, Map<Long, String> instruments, String startedBy) {
         formingCandles.clear();
         legCandleCount.clear();
-        config.setStrategyKey(StrategyKey.NIFTY_BREAKOUT);
+        config.setStrategyKey(strategyKey);
 
         session = TradeSession.builder()
                 .sessionId(UUID.randomUUID().toString())
@@ -329,10 +330,20 @@ public class BreakoutStrategyEngine implements TradingEngine {
         return session;
     }
 
+    /**
+     * NIFTY vs BANKNIFTY index prefix for Kite instrument lookups — mirrors
+     * ScalpingStrategyEngine's indexPrefix(), driven by the authoritative strategyKey
+     * (via config.isBankNifty()) rather than sniffing symbol text.
+     */
+    private String indexPrefix() {
+        return session.getConfig().isBankNifty() ? "BANKNIFTY" : "NIFTY";
+    }
+
     private void lockAndSubscribeAtmOptions() {
         LocalDate expiry = session.getLockedExpiry();
         int ceStrike = session.getLockedCeStrike();
         int peStrike = session.getLockedPeStrike();
+        String index = indexPrefix();
 
         if (expiry == null) {
             log.error("[{}][BREAKOUT] lockedExpiry is null — cannot subscribe options", username);
@@ -340,13 +351,13 @@ public class BreakoutStrategyEngine implements TradingEngine {
         }
 
         Map<Long, String> toSub = new HashMap<>();
-        kiteInstrumentService.findOption("NIFTY", expiry, ceStrike, "CE").ifPresentOrElse(i -> {
+        kiteInstrumentService.findOption(index, expiry, ceStrike, "CE").ifPresentOrElse(i -> {
             toSub.put(i.getInstrumentToken(), i.getTradingsymbol());
             session.setLockedCeInstrument(i.getTradingsymbol());
             log.info("[{}][BREAKOUT] CE: {} token={}", username, i.getTradingsymbol(), i.getInstrumentToken());
         }, () -> log.warn("[{}][BREAKOUT] CE not in cache: expiry={} strike={}", username, expiry, ceStrike));
 
-        kiteInstrumentService.findOption("NIFTY", expiry, peStrike, "PE").ifPresentOrElse(i -> {
+        kiteInstrumentService.findOption(index, expiry, peStrike, "PE").ifPresentOrElse(i -> {
             toSub.put(i.getInstrumentToken(), i.getTradingsymbol());
             session.setLockedPeInstrument(i.getTradingsymbol());
             log.info("[{}][BREAKOUT] PE: {} token={}", username, i.getTradingsymbol(), i.getInstrumentToken());

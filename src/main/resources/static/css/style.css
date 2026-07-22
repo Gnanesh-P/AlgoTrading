@@ -126,6 +126,14 @@ select option { background: var(--bg3); }
 .badge-waiting { background: rgba(210,153,34,0.15); color: #e3b341; border: 1px solid rgba(210,153,34,0.3); }
 .badge-in_position { background: rgba(35,134,54,0.15); color: #3fb950; border: 1px solid rgba(35,134,54,0.3); }
 .badge-stopped { background: rgba(218,54,51,0.15); color: #f85149; border: 1px solid rgba(218,54,51,0.3); }
+/* Actual status strings the backend sends (see AlgoStatusResponse.status) run through
+   status.toLowerCase().replace(/_/g,'') in app.js — these are the classes that produces. */
+.badge-running       { background: rgba(35,134,54,0.15); color: #3fb950; border: 1px solid rgba(35,134,54,0.3); }
+.badge-targethit     { background: rgba(35,134,54,0.15); color: #3fb950; border: 1px solid rgba(35,134,54,0.3); }
+.badge-recovered     { background: rgba(35,134,54,0.15); color: #3fb950; border: 1px solid rgba(35,134,54,0.3); }
+.badge-slhit         { background: rgba(218,54,51,0.15); color: #f85149; border: 1px solid rgba(218,54,51,0.3); }
+.badge-trailingstop  { background: rgba(31,111,235,0.15); color: #58a6ff; border: 1px solid rgba(31,111,235,0.3); }
+.badge-eod           { background: rgba(139,148,158,0.15); color: var(--text2); border: 1px solid var(--border); }
 
 /* ===== QUOTES / FUNDS BAR ===== */
 .quotes-bar {
@@ -150,6 +158,36 @@ select option { background: var(--bg3); }
 .kite-banner span { color: #e3b341; font-size: 13px; }
 .banner-actions { display: flex; align-items: center; gap: 8px; }
 
+/* ===== OVERVIEW STRIP — at-a-glance status/P&L for all strategies, click to jump ===== */
+.overview-strip {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 18px;
+  padding: 10px 20px; background: var(--bg2); border-bottom: 1px solid var(--border);
+}
+.overview-group { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.overview-group-label {
+  font-size: 11px; font-weight: 700; color: var(--text2); text-transform: uppercase;
+  letter-spacing: 0.5px; margin-right: 2px;
+}
+.overview-chip {
+  display: flex; align-items: center; gap: 6px; background: var(--bg3); border: 1px solid var(--border);
+  border-radius: 20px; padding: 5px 12px; cursor: pointer; transition: border-color 0.15s, transform 0.1s;
+}
+.overview-chip:hover { border-color: var(--info); transform: translateY(-1px); }
+.oc-icon { font-size: 13px; }
+.oc-name { font-size: 12px; color: var(--text2); font-weight: 600; }
+.oc-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--text2); flex-shrink: 0; }
+.oc-dot-idle       { background: var(--text2); }
+.oc-dot-waiting    { background: #e3b341; }
+.oc-dot-running    { background: #3fb950; box-shadow: 0 0 6px rgba(63,185,80,0.6); }
+.oc-dot-stopped    { background: #f85149; }
+.oc-dot-targethit, .oc-dot-recovered { background: #3fb950; }
+.oc-dot-slhit      { background: #f85149; }
+.oc-dot-trailingstop { background: #58a6ff; }
+.oc-dot-eod        { background: var(--text2); }
+.oc-pnl { font-family: monospace; font-size: 12px; font-weight: 700; color: var(--text2); }
+.oc-pnl-pos { color: #3fb950; }
+.oc-pnl-neg { color: #f85149; }
+
 /* ===== MAIN GRID (legacy single-strategy layout, kept for compatibility) ===== */
 .main-grid {
   display: grid; grid-template-columns: 340px 1fr 380px;
@@ -170,11 +208,25 @@ select option { background: var(--bg3); }
 
 .card-header {
   display: flex; align-items: center; justify-content: space-between;
-  margin-bottom: 14px; padding-bottom: 12px; border-bottom: 1px solid var(--border);
+  padding-bottom: 12px; border-bottom: 1px solid var(--border);
+  cursor: pointer; user-select: none;
 }
+.strategy-card:not(.collapsed) .card-header { margin-bottom: 14px; }
 .card-title-group { display: flex; align-items: center; gap: 10px; }
 .card-icon { font-size: 22px; line-height: 1; }
 .card-subtitle { font-size: 11px; color: var(--text2); }
+.card-header-right { display: flex; align-items: center; gap: 10px; }
+.card-header-pnl {
+  font-family: monospace; font-weight: 700; font-size: 13px; color: var(--text2);
+  background: var(--bg3); border: 1px solid var(--border); border-radius: 14px; padding: 3px 10px;
+}
+.card-header-pnl.pnl-pos { color: #3fb950; }
+.card-header-pnl.pnl-neg { color: #f85149; }
+.card-expand-btn { font-size: 15px; color: var(--text2); width: 16px; text-align: center; }
+
+/* Cards collapse to just their header — everything below stays mounted (so polling/WebSocket
+   updates keep flowing) but is hidden, so re-expanding shows current data immediately. */
+.strategy-card.collapsed .card-body { display: none; }
 
 .card-config { margin-bottom: 14px; }
 .card-config > summary {

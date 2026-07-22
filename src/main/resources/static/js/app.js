@@ -4,9 +4,16 @@ let pricePoller  = null;
 let statusPoller = null;
 
 const STRATEGIES = [
-  { key: 'NIFTY_SCALP',     title: 'NIFTY Scalping',     subtitle: '1-Min Scalping · NIFTY',            icon: '⚡', index: 'NIFTY',     manualStrike: true,  breakout: false },
-  { key: 'BANKNIFTY_SCALP', title: 'Bank Nifty Scalping', subtitle: '1-Min Scalping · BANKNIFTY',        icon: '🏦', index: 'BANKNIFTY', manualStrike: true,  breakout: false },
-  { key: 'NIFTY_BREAKOUT',  title: 'NIFTY Breakout',      subtitle: '5-Min Breakout · NIFTY',            icon: '🚀', index: 'NIFTY',     manualStrike: true,  breakout: true  },
+  { key: 'NIFTY_SCALP',        title: 'NIFTY Scalping',         subtitle: '1-Min Scalping · NIFTY',     icon: '⚡', index: 'NIFTY',     manualStrike: true,  breakout: false },
+  { key: 'BANKNIFTY_SCALP',    title: 'Bank Nifty Scalping',     subtitle: '1-Min Scalping · BANKNIFTY', icon: '🏦', index: 'BANKNIFTY', manualStrike: true,  breakout: false },
+  { key: 'NIFTY_BREAKOUT',     title: 'NIFTY Breakout',          subtitle: '5-Min Breakout · NIFTY',     icon: '🚀', index: 'NIFTY',     manualStrike: true,  breakout: true  },
+  { key: 'BANKNIFTY_BREAKOUT', title: 'Bank Nifty Breakout',     subtitle: '5-Min Breakout · BANKNIFTY', icon: '💥', index: 'BANKNIFTY', manualStrike: true,  breakout: true  },
+];
+
+// Group cards by underlying index for the tabbed layout below.
+const STRATEGY_GROUPS = [
+  { key: 'NIFTY',     title: 'NIFTY',     icon: '⚡' },
+  { key: 'BANKNIFTY', title: 'BANK NIFTY', icon: '🏦' },
 ];
 
 // Per-key runtime state: { currentSession, savedConfig, pnlFrozen }
@@ -50,8 +57,16 @@ function init() {
   const grid = document.getElementById('cards-grid');
   grid.innerHTML = STRATEGIES.map(buildCardHtml).join('');
 
+  const overviewEl = document.getElementById('overview-strip');
+  if (overviewEl) overviewEl.innerHTML = buildOverviewStrip();
+
   STRATEGIES.forEach(s => {
     cardState[s.key] = { currentSession: null, savedConfig: null, pnlFrozen: false };
+    // Cards default to collapsed so 4 concurrent strategies stay manageable on one screen —
+    // whichever ones are actually running get auto-expanded once the first status poll lands
+    // (see fetchAndRenderStatusAll). A user's manual expand/collapse always wins after that.
+    const stored = localStorage.getItem('cardCollapsed_' + s.key);
+    setCardCollapsed(s.key, stored === null ? true : stored === '1', false);
   });
 
   applyRoleVisibility();
@@ -555,6 +570,8 @@ function startStatusPoller() {
   statusPoller = setInterval(fetchAndRenderStatusAll, 3000);
 }
 
+let firstStatusPollDone = false;
+
 async function fetchAndRenderStatusAll() {
   if (!token) return;
   try {
@@ -570,11 +587,21 @@ async function fetchAndRenderStatusAll() {
       if (s && !cardState[key].pnlFrozen) {
         cardState[key].currentSession = s;
         renderSession(key, s);
-        if (s.active) runningCount++;
+        if (s.active) {
+          runningCount++;
+          // Auto-expand only once, on the very first poll after page load (e.g. a strategy
+          // was already running before this page load/refresh) — and only if the user hasn't
+          // ever explicitly chosen a collapse state for this card. Never fires again after
+          // that so it can't fight a manual toggle made later in the session.
+          if (!firstStatusPollDone && localStorage.getItem('cardCollapsed_' + key) === null) {
+            setCardCollapsed(key, false, false);
+          }
+        }
       } else if (!s) {
         renderIdleCard(key);
       }
     });
+    firstStatusPollDone = true;
 
     const badge = document.getElementById('running-badge');
     if (badge) badge.textContent = `${runningCount} / ${STRATEGIES.length} Running`;
@@ -588,6 +615,13 @@ function renderIdleCard(key) {
   const stopBtn  = document.getElementById('btn-stop-' + key);
   if (startBtn) startBtn.disabled = false;
   if (stopBtn)  stopBtn.disabled  = true;
+
+  const ovDot = document.getElementById('ov-dot-' + key);
+  if (ovDot) ovDot.className = 'oc-dot oc-dot-idle';
+  const ovPnl = document.getElementById('ov-pnl-' + key);
+  if (ovPnl) { ovPnl.textContent = '₹0.00'; ovPnl.classList.remove('oc-pnl-pos', 'oc-pnl-neg'); }
+  const headerPnl = document.getElementById('card-pnl-pill-' + key);
+  if (headerPnl) { headerPnl.textContent = '₹0.00'; headerPnl.classList.remove('pnl-pos', 'pnl-neg'); }
 }
 
 function renderSession(key, s) {
@@ -681,6 +715,22 @@ function renderSession(key, s) {
   setAmount('pnl-realized-' + key, realized);
   setAmount('pnl-open-' + key,     openPnl);
   setAmount('pnl-total-' + key,    total, true);
+
+  const pnlText = (total >= 0 ? '₹' : '-₹') + fmt(Math.abs(total));
+  const headerPnl = document.getElementById('card-pnl-pill-' + key);
+  if (headerPnl) {
+    headerPnl.textContent = pnlText;
+    headerPnl.classList.toggle('pnl-pos', total >= 0);
+    headerPnl.classList.toggle('pnl-neg', total < 0);
+  }
+  const ovDot = document.getElementById('ov-dot-' + key);
+  if (ovDot) ovDot.className = 'oc-dot oc-dot-' + status.toLowerCase().replace(/_/g, '');
+  const ovPnl = document.getElementById('ov-pnl-' + key);
+  if (ovPnl) {
+    ovPnl.textContent = pnlText;
+    ovPnl.classList.toggle('oc-pnl-pos', total >= 0);
+    ovPnl.classList.toggle('oc-pnl-neg', total < 0);
+  }
   const pnlTargetEl = document.getElementById('pnl-target-' + key);
   const pnlSlEl     = document.getElementById('pnl-sl-' + key);
   if (pnlTargetEl) pnlTargetEl.textContent = '₹' + fmt(target);
@@ -1166,6 +1216,52 @@ function escapeHtml(str) {
     .replace(/"/g, '&quot;');
 }
 
+// ===== COLLAPSIBLE CARDS + OVERVIEW STRIP =====
+// With 4 concurrent strategies, showing every card's full config/candles/trade-log at once
+// gets unwieldy. Cards collapse to just their header (icon, title, live P&L, status badge) by
+// default; the overview strip stays visible above the grid as a permanent at-a-glance summary
+// of all 4, and clicking a chip jumps straight to (and expands) that strategy's card.
+
+function toggleCard(key) {
+  const card = document.getElementById('card-' + key);
+  if (!card) return;
+  setCardCollapsed(key, !card.classList.contains('collapsed'), true);
+}
+
+function setCardCollapsed(key, collapsed, userInitiated) {
+  const card = document.getElementById('card-' + key);
+  if (!card) return;
+  card.classList.toggle('collapsed', collapsed);
+  const btn = document.getElementById('card-expand-btn-' + key);
+  if (btn) btn.textContent = collapsed ? '▾' : '▴';
+  if (userInitiated) {
+    localStorage.setItem('cardCollapsed_' + key, collapsed ? '1' : '0');
+  }
+}
+
+function scrollToCard(key) {
+  setCardCollapsed(key, false, true);
+  const card = document.getElementById('card-' + key);
+  if (card) card.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function buildOverviewStrip() {
+  return STRATEGY_GROUPS.map(g => {
+    const chips = STRATEGIES.filter(s => s.index === g.key).map(s => `
+        <div class="overview-chip" id="ov-chip-${s.key}" onclick="scrollToCard('${s.key}')">
+          <span class="oc-icon">${s.icon}</span>
+          <span class="oc-name">${s.breakout ? 'Breakout' : 'Scalp'}</span>
+          <span class="oc-dot oc-dot-idle" id="ov-dot-${s.key}"></span>
+          <span class="oc-pnl" id="ov-pnl-${s.key}">₹0.00</span>
+        </div>`).join('');
+    return `
+      <div class="overview-group">
+        <span class="overview-group-label">${g.icon} ${g.title}</span>
+        ${chips}
+      </div>`;
+  }).join('');
+}
+
 // ===== CARD TEMPLATE =====
 function buildCardHtml(s) {
   const k = s.key;
@@ -1222,8 +1318,8 @@ function buildCardHtml(s) {
         </div>` : '';
 
   return `
-  <div class="panel strategy-card" id="card-${k}">
-    <div class="card-header">
+  <div class="panel strategy-card collapsed" id="card-${k}">
+    <div class="card-header" onclick="toggleCard('${k}')">
       <div class="card-title-group">
         <span class="card-icon">${s.icon}</span>
         <div>
@@ -1231,9 +1327,14 @@ function buildCardHtml(s) {
           <div class="card-subtitle">${s.subtitle}</div>
         </div>
       </div>
-      <span id="strategy-badge-${k}" class="badge badge-idle">IDLE</span>
+      <div class="card-header-right">
+        <span class="card-header-pnl" id="card-pnl-pill-${k}">₹0.00</span>
+        <span id="strategy-badge-${k}" class="badge badge-idle">IDLE</span>
+        <span class="card-expand-btn" id="card-expand-btn-${k}">▾</span>
+      </div>
     </div>
 
+    <div class="card-body" id="card-body-${k}">
     <details class="card-config">
       <summary>Configuration</summary>
       <div class="form-row">
@@ -1513,6 +1614,7 @@ ${s.breakout ? `
       </div>
       <div class="usc-date" id="usc-date-${k}">—</div>
       <div class="usc-note">Trade details are managed by the system. Contact admin for a full report.</div>
+    </div>
     </div>
   </div>`;
 }

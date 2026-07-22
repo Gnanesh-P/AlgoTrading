@@ -59,7 +59,7 @@ public class TradingConfig {
      */
     public boolean isBankNifty() {
         if (strategyKey != null) {
-            return strategyKey == StrategyKey.BANKNIFTY_SCALP;
+            return strategyKey == StrategyKey.BANKNIFTY_SCALP || strategyKey == StrategyKey.BANKNIFTY_BREAKOUT;
         }
         return futuresInstrument != null && futuresInstrument.toUpperCase().contains("BANKNIFTY");
     }
