@@ -1,5 +1,6 @@
 package com.algotrading.backend.model;
 
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -7,6 +8,12 @@ import lombok.NoArgsConstructor;
 
 import java.time.LocalTime;
 
+// Computed getters (getTotalQuantity(), isBankNifty()) are picked up by Jackson as JSON
+// properties on serialization but have no backing field/setter — without ignoreUnknown,
+// SessionPersistenceService's strict ObjectMapper throws on reload and silently wipes the
+// persisted session (crash-recovery for an in-flight strategy would otherwise be lost on
+// every server restart).
+@JsonIgnoreProperties(ignoreUnknown = true)
 @Data
 @Builder
 @NoArgsConstructor

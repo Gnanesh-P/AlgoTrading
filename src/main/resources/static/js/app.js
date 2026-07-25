@@ -4,10 +4,10 @@ let pricePoller  = null;
 let statusPoller = null;
 
 const STRATEGIES = [
-  { key: 'NIFTY_SCALP',        title: 'NIFTY Scalping',         subtitle: '1-Min Scalping · NIFTY',     icon: '⚡', index: 'NIFTY',     manualStrike: true,  breakout: false },
-  { key: 'BANKNIFTY_SCALP',    title: 'Bank Nifty Scalping',     subtitle: '1-Min Scalping · BANKNIFTY', icon: '🏦', index: 'BANKNIFTY', manualStrike: true,  breakout: false },
-  { key: 'NIFTY_BREAKOUT',     title: 'NIFTY Breakout',          subtitle: '5-Min Breakout · NIFTY',     icon: '🚀', index: 'NIFTY',     manualStrike: true,  breakout: true  },
-  { key: 'BANKNIFTY_BREAKOUT', title: 'Bank Nifty Breakout',     subtitle: '5-Min Breakout · BANKNIFTY', icon: '💥', index: 'BANKNIFTY', manualStrike: true,  breakout: true  },
+  { key: 'NIFTY_SCALP',        title: 'NIFTY Scalping',         subtitle: '1-Min Scalping · NIFTY',     icon: '⚡', index: 'NIFTY',     breakout: false },
+  { key: 'BANKNIFTY_SCALP',    title: 'Bank Nifty Scalping',     subtitle: '1-Min Scalping · BANKNIFTY', icon: '🏦', index: 'BANKNIFTY', breakout: false },
+  { key: 'NIFTY_BREAKOUT',     title: 'NIFTY Breakout',          subtitle: '5-Min Breakout · NIFTY',     icon: '🚀', index: 'NIFTY',     breakout: true  },
+  { key: 'BANKNIFTY_BREAKOUT', title: 'Bank Nifty Breakout',     subtitle: '5-Min Breakout · BANKNIFTY', icon: '💥', index: 'BANKNIFTY', breakout: true  },
 ];
 
 // Groups the sidebar nav into two sections, one per underlying index.
@@ -89,7 +89,6 @@ function init() {
       lotQtyEl.addEventListener('input', () => updateQtyDisplay(key));
       updateQtyDisplay(key);
     }
-    if (s.manualStrike) onStrikeModeChange(key);
     setStrategyButtonsLoading(key, true);
   });
 
@@ -385,19 +384,6 @@ function populateStrikeDropdowns(key, chain) {
   peSel.innerHTML = peOpts || '<option>No data</option>';
 }
 
-function onStrikeModeChange(key) {
-  const modeEl = document.getElementById('cfg-strike-mode-' + key);
-  if (!modeEl) return;
-  const mode = modeEl.value;
-  const manualSection = document.getElementById('manual-strike-section-' + key);
-  if (manualSection) manualSection.style.display = mode === 'MANUAL' ? 'block' : 'none';
-  const expiryEl = document.getElementById('cfg-expiry-' + key);
-  if (expiryEl) {
-    expiryEl.disabled = mode === 'AUTO_ATM';
-    expiryEl.style.opacity = mode === 'AUTO_ATM' ? '0.4' : '1';
-  }
-}
-
 function toggleSlEnabled(key) {
   const enabled = document.getElementById('sl-enabled-' + key).checked;
   const slInput = document.getElementById('cfg-sl-' + key);
@@ -420,8 +406,6 @@ function onFuturesChange(key) {
 
 async function saveConfig(key) {
   const strat       = STRATEGIES.find(s => s.key === key);
-  const strikeModeEl = document.getElementById('cfg-strike-mode-' + key);
-  const strikeMode  = strat.manualStrike ? strikeModeEl.value : 'AUTO_ATM';
   const ceSel       = document.getElementById('cfg-ce-strike-' + key);
   const peSel       = document.getElementById('cfg-pe-strike-' + key);
   const futSel      = document.getElementById('cfg-futures-' + key);
@@ -433,21 +417,18 @@ async function saveConfig(key) {
   const futOpt = futSel.selectedOptions[0];
   const futureToken = futOpt ? parseInt(futOpt.dataset.token || 0) : 0;
 
-  let ceSymbol = '', peSymbol = '', ceToken = 0, peToken = 0, ceStrikePrice = 0, peStrikePrice = 0;
-
-  if (strikeMode === 'MANUAL') {
-    const ceOpt = ceSel.selectedOptions[0];
-    const peOpt = peSel.selectedOptions[0];
-    ceSymbol = ceSel.value;
-    peSymbol = peSel.value;
-    ceToken  = ceOpt ? parseInt(ceOpt.dataset.token || 0) : 0;
-    peToken  = peOpt ? parseInt(peOpt.dataset.token || 0) : 0;
-    // data-strike carries the numeric strike (e.g. 21000) from the option-chain dropdown —
-    // needed so the backend can lock/report the selected strike (see lockedCeStrike/lockedPeStrike
-    // in AlgoStatusResponse, used by the breakout reference-candle High/Low display).
-    ceStrikePrice = ceOpt ? parseInt(ceOpt.dataset.strike || 0) : 0;
-    peStrikePrice = peOpt ? parseInt(peOpt.dataset.strike || 0) : 0;
-  }
+  // Manual strike selection only — Auto ATM has been removed.
+  const ceOpt = ceSel.selectedOptions[0];
+  const peOpt = peSel.selectedOptions[0];
+  const ceSymbol = ceSel.value;
+  const peSymbol = peSel.value;
+  const ceToken  = ceOpt ? parseInt(ceOpt.dataset.token || 0) : 0;
+  const peToken  = peOpt ? parseInt(peOpt.dataset.token || 0) : 0;
+  // data-strike carries the numeric strike (e.g. 21000) from the option-chain dropdown —
+  // needed so the backend can lock/report the selected strike (see lockedCeStrike/lockedPeStrike
+  // in AlgoStatusResponse, used by the breakout reference-candle High/Low display).
+  const ceStrikePrice = ceOpt ? parseInt(ceOpt.dataset.strike || 0) : 0;
+  const peStrikePrice = peOpt ? parseInt(peOpt.dataset.strike || 0) : 0;
 
   const eodChecked = document.getElementById('cfg-eod-' + key).checked;
   const slEnabled  = document.getElementById('sl-enabled-' + key).checked;
@@ -476,7 +457,7 @@ async function saveConfig(key) {
     peSymbol,  peToken,  peStrikePrice,
     expiryType:      expiry,
     entryStartTime:  startTimeSel.value,
-    strikeMode:      strikeMode === 'AUTO_ATM' ? 'AUTO' : 'MANUAL',
+    strikeMode:      'MANUAL',
     lotQuantity:     lots,
     maxReversals,
     reversalEnabled,
@@ -519,13 +500,50 @@ async function startStrategy(key) {
 }
 
 async function stopStrategy(key) {
-  if (!confirm('Are you sure you want to stop this strategy? Any open position will be squared off.')) return;
+  const strat = STRATEGIES.find(s => s.key === key);
+  const label = strat ? strat.title : key;
+  if (!confirm(`Exit ${label}? Any open position will be squared off.`)) return;
   setStrategyButtonsLoading(key, true);
   try {
     await post('/algo/stop?strategy=' + key, {});
+    showToast(`⏹️ ${label} exited.`, 'success');
     fetchAndRenderStatusAll();
   } catch (e) {
     showMsg('config-msg-' + key, '❌ ' + (e.message || 'Stop failed'), 'error');
+    fetchAndRenderStatusAll();
+  }
+}
+
+async function stopAllStrategies() {
+  const activeKeys = STRATEGIES
+    .filter(s => cardState[s.key] && cardState[s.key].currentSession && cardState[s.key].currentSession.active)
+    .map(s => s.key);
+
+  if (activeKeys.length === 0) {
+    showToast('No active strategies to stop.', 'info');
+    return;
+  }
+
+  const names = activeKeys.map(k => (STRATEGIES.find(s => s.key === k) || {}).title || k).join(', ');
+  if (!confirm(`Stop ALL ${activeKeys.length} active strategy(ies)?\n\n${names}\n\nAny open positions will be squared off.`)) return;
+
+  const stopAllBtn = document.getElementById('btn-stop-all');
+  if (stopAllBtn) stopAllBtn.disabled = true;
+  activeKeys.forEach(key => setStrategyButtonsLoading(key, true));
+
+  try {
+    const results = await Promise.allSettled(activeKeys.map(key => post('/algo/stop?strategy=' + key, {})));
+    const failed = results
+      .map((r, i) => ({ r, key: activeKeys[i] }))
+      .filter(x => x.r.status === 'rejected');
+    if (failed.length === 0) {
+      showToast(`🛑 Stopped all ${activeKeys.length} active strategy(ies).`, 'success');
+    } else {
+      const failedNames = failed.map(x => (STRATEGIES.find(s => s.key === x.key) || {}).title || x.key).join(', ');
+      showToast(`⚠️ Stopped ${activeKeys.length - failed.length}/${activeKeys.length}. Failed: ${failedNames}`, 'error', 9000);
+    }
+  } finally {
+    if (stopAllBtn) stopAllBtn.disabled = false;
     fetchAndRenderStatusAll();
   }
 }
@@ -611,6 +629,8 @@ async function fetchAndRenderStatusAll() {
 
     const badge = document.getElementById('running-badge');
     if (badge) badge.textContent = `${runningCount} / ${STRATEGIES.length} Running`;
+    const stopAllBtn = document.getElementById('btn-stop-all');
+    if (stopAllBtn) stopAllBtn.disabled = runningCount === 0;
   } catch (_) {
     STRATEGIES.forEach(s => setStrategyButtonsLoading(s.key, false));
   }
@@ -619,8 +639,8 @@ async function fetchAndRenderStatusAll() {
 function renderIdleCard(key) {
   const startBtn = document.getElementById('btn-start-' + key);
   const stopBtn  = document.getElementById('btn-stop-' + key);
-  if (startBtn) startBtn.disabled = false;
-  if (stopBtn)  stopBtn.disabled  = true;
+  if (startBtn) { startBtn.disabled = false; startBtn.classList.remove('hidden'); }
+  if (stopBtn)  { stopBtn.disabled  = true;  stopBtn.classList.add('hidden'); }
 
   const sideItem = document.getElementById('side-item-' + key);
   if (sideItem) sideItem.classList.remove('is-live');
@@ -655,11 +675,10 @@ function renderSession(key, s) {
     setText('cfg-chip-sl-' + key,     'SL ₹'     + fmt(s.stopLossPoints || 0));
     setText('cfg-chip-lots-' + key,   (s.lotQuantity || 1) + ' lot = ' + (s.totalQuantity || 0) + ' qty');
     setText('cfg-chip-mode-' + key,   s.paperTrade ? '📄 Paper' : '🔴 Live');
-    setText('cfg-chip-strike-' + key, s.strikeMode === 'AUTO_ATM' ? '🎯 Auto ATM' : '✋ Manual Strike');
+    setText('cfg-chip-strike-' + key, '✋ Manual Strike');
     if (s.lockedCeInstrument) setText('cfg-chip-ce-' + key, 'CE: ' + s.lockedCeInstrument);
     if (s.lockedPeInstrument) setText('cfg-chip-pe-' + key, 'PE: ' + s.lockedPeInstrument);
-    if (s.lockedExpiryLabel) setText('cfg-chip-expiry-' + key, s.lockedExpiryLabel);
-    else setText('cfg-chip-expiry-' + key, s.strikeMode === 'AUTO_ATM' ? 'Expiry: resolving...' : '—');
+    setText('cfg-chip-expiry-' + key, s.lockedExpiryLabel || '—');
   }
 
   const stateEl = document.getElementById('s-state-' + key);
@@ -791,8 +810,8 @@ function renderSession(key, s) {
   const isStopped = !s.active;
   const startBtn = document.getElementById('btn-start-' + key);
   const stopBtn  = document.getElementById('btn-stop-' + key);
-  if (startBtn) startBtn.disabled = !isStopped;
-  if (stopBtn)  stopBtn.disabled  =  isStopped;
+  if (startBtn) { startBtn.disabled = !isStopped; startBtn.classList.toggle('hidden', !isStopped); }
+  if (stopBtn)  { stopBtn.disabled  =  isStopped; stopBtn.classList.toggle('hidden',  isStopped); }
 
   if (strip) strip.style.opacity = isStopped ? '0.55' : '1';
   if (card)  card.classList.toggle('card-stopped-dim', isStopped);
@@ -1246,7 +1265,7 @@ function selectStrategy(key) {
 }
 
 function buildSidebarHtml() {
-  return STRATEGY_GROUPS.map(g => {
+  const groups = STRATEGY_GROUPS.map(g => {
     const items = STRATEGIES.filter(s => s.index === g.key).map(s => `
         <div class="side-item" id="side-item-${s.key}" onclick="selectStrategy('${s.key}')">
           <span class="side-item-icon">${s.icon}</span>
@@ -1258,6 +1277,8 @@ function buildSidebarHtml() {
             </div>
           </div>
           <div class="side-item-pnl" id="side-pnl-${s.key}">₹0.00</div>
+          <button type="button" class="side-item-stop" id="side-stop-${s.key}"
+                  onclick="event.stopPropagation(); stopStrategy('${s.key}');" title="Exit ${s.title}">⏹️</button>
         </div>`).join('');
     return `
       <div class="side-group">
@@ -1265,20 +1286,20 @@ function buildSidebarHtml() {
         ${items}
       </div>`;
   }).join('');
+
+  return groups + `
+    <div class="sidebar-stopall-wrap">
+      <button id="btn-stop-all" class="btn btn-danger btn-lg btn-full" onclick="stopAllStrategies()" disabled title="Stop every active strategy">🛑 Stop All</button>
+    </div>`;
 }
 
 // ===== CARD TEMPLATE =====
 function buildCardHtml(s) {
   const k = s.key;
-  const strikeModeBlock = s.manualStrike ? `
+  // Manual strike selection only — Auto ATM has been removed, so the strike-mode picker
+  // is gone entirely and the CE/PE strike dropdowns are always shown.
+  const strikeModeBlock = `
         <div class="form-row">
-          <div class="form-group">
-            <label>Strike Mode</label>
-            <select id="cfg-strike-mode-${k}" onchange="onStrikeModeChange('${k}')">
-              <option value="AUTO_ATM">Auto ATM</option>
-              <option value="MANUAL">Manual</option>
-            </select>
-          </div>
           <div class="form-group">
             <label>Expiry</label>
             <select id="cfg-expiry-${k}">
@@ -1287,30 +1308,14 @@ function buildCardHtml(s) {
             </select>
           </div>
         </div>
-        <div id="manual-strike-section-${k}" style="display:none;">
-          <div class="form-row">
-            <div class="form-group">
-              <label>CE Strike</label>
-              <select id="cfg-ce-strike-${k}"><option>—</option></select>
-            </div>
-            <div class="form-group">
-              <label>PE Strike</label>
-              <select id="cfg-pe-strike-${k}"><option>—</option></select>
-            </div>
-          </div>
-        </div>` : `
         <div class="form-row">
           <div class="form-group">
-            <label>Strike Mode</label>
-            <input type="text" value="Auto ATM (fixed)" disabled/>
-            <input type="hidden" id="cfg-strike-mode-${k}" value="AUTO_ATM"/>
+            <label>CE Strike</label>
+            <select id="cfg-ce-strike-${k}"><option>—</option></select>
           </div>
           <div class="form-group">
-            <label>Expiry</label>
-            <select id="cfg-expiry-${k}">
-              <option value="CURRENT_WEEK">Current Week</option>
-              <option value="NEXT_WEEK">Next Week</option>
-            </select>
+            <label>PE Strike</label>
+            <select id="cfg-pe-strike-${k}"><option>—</option></select>
           </div>
         </div>`;
 
@@ -1407,7 +1412,7 @@ function buildCardHtml(s) {
 
     <div class="strategy-controls">
       <button id="btn-start-${k}" class="btn btn-success" onclick="startStrategy('${k}')" disabled>▶️ Start</button>
-      <button id="btn-stop-${k}"  class="btn btn-danger"  onclick="stopStrategy('${k}')" disabled>⏹️ Stop</button>
+      <button id="btn-stop-${k}"  class="btn btn-danger hidden" onclick="stopStrategy('${k}')" disabled>⏹️ Exit</button>
     </div>
 
     <div id="live-params-section-${k}" class="live-params hidden">

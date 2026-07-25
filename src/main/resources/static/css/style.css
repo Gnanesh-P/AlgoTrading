@@ -141,9 +141,9 @@ select option { background: var(--bg3); }
   padding: 8px 20px; background: var(--bg2); border-bottom: 1px solid var(--border);
 }
 .quote-chip {
-  background: var(--bg3); border: 1px solid var(--border); padding: 4px 10px;
-  border-radius: 20px; font-size: 12px; font-family: monospace;
-  display: flex; align-items: center; gap: 6px;
+  background: var(--bg3); border: 1px solid var(--border); padding: 6px 14px;
+  border-radius: 20px; font-size: 16px; font-weight: 600; font-family: monospace;
+  display: flex; align-items: center; gap: 8px;
 }
 .quote-chip .q-name { color: var(--text2); }
 .quote-chip .q-up { color: #22c55e; }
@@ -181,6 +181,11 @@ select option { background: var(--bg3); }
   background: var(--bg2); border-right: 1px solid var(--border);
 }
 .side-group + .side-group { margin-top: 18px; }
+
+.sidebar-stopall-wrap { margin-top: 24px; padding-top: 16px; border-top: 1px solid var(--border); }
+.sidebar-stopall-wrap .btn {
+  padding: 16px 20px; font-size: 16px; font-weight: 700; letter-spacing: 0.3px;
+}
 .side-group-label {
   font-size: 11px; font-weight: 700; color: var(--text2); text-transform: uppercase;
   letter-spacing: 0.6px; padding: 0 8px 8px;
@@ -221,6 +226,18 @@ select option { background: var(--bg3); }
 .side-item.is-live .side-item-pnl { display: inline-block; }
 .side-item-pnl.side-pnl-pos { color: #22c55e; }
 .side-item-pnl.side-pnl-neg { color: #f43f5e; }
+
+/* Quick-exit icon on the nav item itself — only shown while that strategy is live, so it can be
+   stopped straight from the sidebar without navigating into its detail card first. */
+.side-item-stop {
+  display: none; flex-shrink: 0; align-items: center; justify-content: center;
+  width: 24px; height: 24px; padding: 0; margin-left: 2px;
+  border: 1px solid rgba(244,63,94,0.4); border-radius: 6px;
+  background: rgba(244,63,94,0.12); color: #f43f5e; font-size: 11px;
+  cursor: pointer; transition: background 0.12s, transform 0.1s;
+}
+.side-item.is-live .side-item-stop { display: inline-flex; }
+.side-item-stop:hover { background: rgba(244,63,94,0.28); transform: scale(1.08); }
 
 .strategy-detail {
   padding: 20px 24px 56px;
@@ -562,5 +579,10 @@ select option { background: var(--bg3); }
   .side-group + .side-group { margin-top: 0; margin-left: 14px; }
   .side-group-label { padding: 0 8px 0 0; white-space: nowrap; }
   .side-item { flex-shrink: 0; margin-bottom: 0; margin-right: 4px; }
+  .sidebar-stopall-wrap {
+    flex-shrink: 0; margin: 0 0 0 14px; padding: 0 0 0 14px;
+    border-top: none; border-left: 1px solid var(--border);
+  }
+  .sidebar-stopall-wrap .btn { padding: 8px 16px; font-size: 13px; white-space: nowrap; }
   .strategy-detail { max-width: 100%; padding: 16px; }
 }
