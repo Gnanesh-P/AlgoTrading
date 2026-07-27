@@ -65,6 +65,9 @@ function init() {
   const sidebar = document.getElementById('strategy-sidebar');
   if (sidebar) sidebar.innerHTML = buildSidebarHtml();
 
+  const oiPanel = document.getElementById('oi-panel');
+  if (oiPanel) oiPanel.innerHTML = buildOiPanelHtml();
+
   STRATEGIES.forEach(s => {
     cardState[s.key] = { currentSession: null, savedConfig: null, pnlFrozen: false };
   });
@@ -99,6 +102,9 @@ function init() {
 
   refreshQuotesBar();
   setInterval(refreshQuotesBar, 60000);
+
+  refreshOiSignal();
+  setInterval(refreshOiSignal, 30000);
 }
 
 async function refreshQuotesBar() {
@@ -129,6 +135,96 @@ async function refreshQuotesBar() {
   } catch (_) { /* funds require Kite connection — best-effort */ }
 
   if (chips) bar.innerHTML = chips;
+}
+
+// ===== NIFTY OI / PCR REVERSAL SIGNAL (right-side panel) =====
+const OI_SIGNAL_LABELS = {
+  STRONG_BULLISH_REVERSAL: '🚀 Strong Bullish Reversal',
+  BULLISH:                 '📈 Bullish',
+  NEUTRAL:                 '➖ Neutral / Range-bound',
+  BEARISH:                 '📉 Bearish',
+  STRONG_BEARISH_REVERSAL: '🔻 Strong Bearish Reversal',
+};
+
+function buildOiPanelHtml() {
+  return `
+    <div class="oi-panel-header">
+      <h3>🎯 NIFTY Reversal Signal</h3>
+      <span class="oi-panel-sub" id="oi-expiry">—</span>
+    </div>
+    <div class="oi-placeholder" id="oi-placeholder">Connect Kite to see the live NIFTY OI signal</div>
+    <div id="oi-panel-content" class="hidden">
+      <div class="oi-signal-badge" id="oi-signal-badge">NEUTRAL</div>
+
+      <div class="oi-gauge-wrap">
+        <div class="oi-gauge"><div class="oi-gauge-marker" id="oi-gauge-marker"></div></div>
+        <div class="oi-gauge-labels">
+          <span>Strong Bearish</span><span>Neutral</span><span>Strong Bullish</span>
+        </div>
+      </div>
+
+      <div class="oi-stat-row">
+        <div class="oi-stat"><div class="oi-stat-label">LTP</div><div class="oi-stat-value" id="oi-ltp">—</div></div>
+        <div class="oi-stat"><div class="oi-stat-label">PCR</div><div class="oi-stat-value" id="oi-pcr">—</div></div>
+      </div>
+      <div class="oi-stat-row">
+        <div class="oi-stat oi-support"><div class="oi-stat-label">Support</div><div class="oi-stat-value" id="oi-support">—</div></div>
+        <div class="oi-stat oi-resistance"><div class="oi-stat-label">Resistance</div><div class="oi-stat-value" id="oi-resistance">—</div></div>
+      </div>
+      <div class="oi-stat-row">
+        <div class="oi-stat"><div class="oi-stat-label">Call OI Δ</div><div class="oi-stat-value" id="oi-call-change">—</div></div>
+        <div class="oi-stat"><div class="oi-stat-label">Put OI Δ</div><div class="oi-stat-value" id="oi-put-change">—</div></div>
+      </div>
+
+      <div class="oi-reasoning-title">Why</div>
+      <ul class="oi-reasoning-list" id="oi-reasoning-list"></ul>
+
+      <div class="oi-disclaimer">Heuristic read of OI/PCR positioning — not financial advice. Updated <span id="oi-asof">—</span></div>
+    </div>`;
+}
+
+async function refreshOiSignal() {
+  const setText = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
+  try {
+    const data = await get('/api/oi-signal');
+    const placeholder = document.getElementById('oi-placeholder');
+    const content = document.getElementById('oi-panel-content');
+
+    if (!data || !data.dataAvailable) {
+      if (placeholder) { placeholder.textContent = (data && data.message) || 'OI data unavailable'; placeholder.classList.remove('hidden'); }
+      if (content) content.classList.add('hidden');
+      return;
+    }
+    if (placeholder) placeholder.classList.add('hidden');
+    if (content) content.classList.remove('hidden');
+
+    setText('oi-expiry', 'Expiry ' + (data.expiryLabel || '—'));
+    setText('oi-ltp', fmt(data.ltp));
+    setText('oi-pcr', (data.pcr || 0).toFixed(2));
+    setText('oi-support', data.supportStrike);
+    setText('oi-resistance', data.resistanceStrike);
+    setText('oi-call-change', (data.callOiChangePct >= 0 ? '+' : '') + (data.callOiChangePct || 0).toFixed(1) + '%');
+    setText('oi-put-change', (data.putOiChangePct >= 0 ? '+' : '') + (data.putOiChangePct || 0).toFixed(1) + '%');
+
+    const badge = document.getElementById('oi-signal-badge');
+    if (badge) {
+      badge.textContent = OI_SIGNAL_LABELS[data.signal] || data.signal;
+      badge.className = 'oi-signal-badge oi-signal-' + String(data.signal || 'neutral').toLowerCase().replace(/_/g, '-');
+    }
+
+    const marker = document.getElementById('oi-gauge-marker');
+    if (marker) {
+      const pct = Math.max(0, Math.min(100, (data.signalScore + 100) / 2));
+      marker.style.left = pct + '%';
+    }
+
+    const list = document.getElementById('oi-reasoning-list');
+    if (list) list.innerHTML = (data.reasoning || []).map(r => `<li>${escapeHtml(r)}</li>`).join('');
+
+    setText('oi-asof', data.asOf ? formatTime(data.asOf) : '—');
+  } catch (e) {
+    console.warn('OI signal fetch failed:', e);
+  }
 }
 
 function getMaxLotSize() {
@@ -631,9 +727,26 @@ async function fetchAndRenderStatusAll() {
     if (badge) badge.textContent = `${runningCount} / ${STRATEGIES.length} Running`;
     const stopAllBtn = document.getElementById('btn-stop-all');
     if (stopAllBtn) stopAllBtn.disabled = runningCount === 0;
+    updateSidebarCumulativePnl();
   } catch (_) {
     STRATEGIES.forEach(s => setStrategyButtonsLoading(s.key, false));
   }
+}
+
+// Sums totalPnL across only the currently-active strategies, straight from the same session
+// data already rendered in each card/sidebar item — no separate API call needed.
+function updateSidebarCumulativePnl() {
+  const el = document.getElementById('sidebar-cumulative-pnl-value');
+  if (!el) return;
+
+  const activePnl = STRATEGIES.reduce((sum, strat) => {
+    const s = cardState[strat.key] && cardState[strat.key].currentSession;
+    return (s && s.active) ? sum + (s.totalPnL || 0) : sum;
+  }, 0);
+
+  el.textContent = (activePnl >= 0 ? '₹' : '-₹') + fmt(Math.abs(activePnl));
+  el.classList.toggle('scp-pos', activePnl >= 0);
+  el.classList.toggle('scp-neg', activePnl < 0);
 }
 
 function renderIdleCard(key) {
@@ -1289,6 +1402,10 @@ function buildSidebarHtml() {
 
   return groups + `
     <div class="sidebar-stopall-wrap">
+      <div class="sidebar-cumulative-pnl" id="sidebar-cumulative-pnl">
+        <div class="scp-label">Cumulative P&amp;L (Active)</div>
+        <div class="scp-value" id="sidebar-cumulative-pnl-value">₹0.00</div>
+      </div>
       <button id="btn-stop-all" class="btn btn-danger btn-lg btn-full" onclick="stopAllStrategies()" disabled title="Stop every active strategy">🛑 Stop All</button>
     </div>`;
 }
