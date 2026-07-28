@@ -132,7 +132,9 @@ select option { background: var(--bg3); }
 .badge-targethit     { background: rgba(34,197,94,0.15); color: #22c55e; border: 1px solid rgba(34,197,94,0.3); }
 .badge-recovered     { background: rgba(34,197,94,0.15); color: #22c55e; border: 1px solid rgba(34,197,94,0.3); }
 .badge-slhit         { background: rgba(244,63,94,0.15); color: #f43f5e; border: 1px solid rgba(244,63,94,0.3); }
-.badge-trailingstop  { background: rgba(99,102,241,0.15); color: #818cf8; border: 1px solid rgba(99,102,241,0.3); }
+/* Trailing stop = profit was locked in via the trailing mechanism — a success, not a loss —
+   so it gets the same green as a target hit, not red/indigo. */
+.badge-trailingstop  { background: rgba(34,197,94,0.15); color: #22c55e; border: 1px solid rgba(34,197,94,0.3); }
 .badge-eod           { background: rgba(139,148,158,0.15); color: var(--text2); border: 1px solid var(--border); }
 
 /* ===== QUOTES / FUNDS BAR ===== */
@@ -230,7 +232,8 @@ select option { background: var(--bg3); }
 .side-dot-stopped    { background: #f43f5e; }
 .side-dot-targethit, .side-dot-recovered { background: #22c55e; }
 .side-dot-slhit      { background: #f43f5e; }
-.side-dot-trailingstop { background: #818cf8; }
+/* Trailing stop = profit locked in — a success, so it's green like a target hit, not red. */
+.side-dot-trailingstop { background: #22c55e; }
 .side-dot-eod        { background: var(--text2); }
 
 /* P/L only makes sense to show while a strategy is actually live — hidden otherwise. */

@@ -919,9 +919,14 @@ public class BreakoutStrategyEngine implements TradingEngine {
     private String resolveStopStatus(String reason) {
         if (reason == null) return "STOPPED";
         String r = reason.toLowerCase();
-        if (r.contains("trailing stop")) return "TRAILING_STOP";
+        // "TRAILING_STOP hit: ..." (underscore, from the enum-derived reason text) was
+        // previously missed here — only the space form matched — so it fell through to the
+        // generic red "STOPPED" status instead of its own (now green) trailing-stop status.
+        if (r.contains("trailing_stop") || r.contains("trailing stop")) return "TRAILING_STOP";
         if (r.contains("target")) return "TARGET_HIT";
-        if (r.contains("stop loss") || r.contains("sl")) return "SL_HIT";
+        // Same underscore-vs-space gap as trailing stop above: the enum-derived reason text is
+        // "STOPLOSS hit: ..." (no space), which the old "stop loss"/"sl" checks never matched.
+        if (r.contains("stoploss") || r.contains("stop loss")) return "SL_HIT";
         if (r.contains("end of day") || r.contains("eod")) return "EOD";
         if (r.contains("recovered")) return "RECOVERED";
         return "STOPPED";

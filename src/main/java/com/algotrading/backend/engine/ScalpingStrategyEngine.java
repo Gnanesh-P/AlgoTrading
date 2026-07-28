@@ -1102,9 +1102,15 @@ public class ScalpingStrategyEngine implements TradingEngine {
     private String resolveStopStatus(String reason) {
         if (reason == null) return "STOPPED";
         String r = reason.toLowerCase();
-        if (r.contains("trailing stop")) return "TRAILING_STOP";
+        // Matches both "TRAILING_STOP hit: ..." (the enum-derived reason text used by the
+        // tick-driven exit paths) and "Trailing stop after reversal: ..." (the reversal-cap
+        // path) — previously only the space form was checked, so the far more common
+        // underscore form fell through all the way to the generic red "STOPPED" status.
+        if (r.contains("trailing_stop") || r.contains("trailing stop")) return "TRAILING_STOP";
         if (r.contains("target")) return "TARGET_HIT";
-        if (r.contains("stop loss") || r.contains("sl")) return "SL_HIT";
+        // Same underscore-vs-space gap as trailing stop above: the enum-derived reason text is
+        // "STOPLOSS hit: ..." (no space), which the old "stop loss"/"sl" checks never matched.
+        if (r.contains("stoploss") || r.contains("stop loss")) return "SL_HIT";
         if (r.contains("max reversal")) return "MAX_REVERSALS";
         if (r.contains("end of day") || r.contains("eod")) return "EOD";
         if (r.contains("recovered")) return "RECOVERED";
