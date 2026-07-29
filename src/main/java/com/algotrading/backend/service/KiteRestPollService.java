@@ -98,9 +98,11 @@ public class KiteRestPollService {
         }
 
         // Build Kite-format keys: "NFO:NIFTY26MAYFUT", "NFO:NIFTY26MAY24900CE", …
-        // All NIFTY futures and option instruments trade on the NFO exchange.
+        // NIFTY/BANKNIFTY trade on NFO; SENSEX (BSE) trades on BFO — the tradingsymbol always
+        // starts with the underlying index name, so that's enough to pick the right prefix
+        // without needing a live instrument-cache lookup here.
         String[] kiteKeys = tokenToSymbol.values().stream()
-                .map(sym -> "NFO:" + sym)
+                .map(sym -> (sym.startsWith("SENSEX") ? "BFO:" : "NFO:") + sym)
                 .distinct()
                 .toArray(String[]::new);
 

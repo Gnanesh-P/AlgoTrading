@@ -8,12 +8,15 @@ const STRATEGIES = [
   { key: 'BANKNIFTY_SCALP',    title: 'Bank Nifty Scalping',     subtitle: '1-Min Scalping · BANKNIFTY', icon: '🏦', index: 'BANKNIFTY', breakout: false },
   { key: 'NIFTY_BREAKOUT',     title: 'NIFTY Breakout',          subtitle: '5-Min Breakout · NIFTY',     icon: '🚀', index: 'NIFTY',     breakout: true  },
   { key: 'BANKNIFTY_BREAKOUT', title: 'Bank Nifty Breakout',     subtitle: '5-Min Breakout · BANKNIFTY', icon: '💥', index: 'BANKNIFTY', breakout: true  },
+  { key: 'SENSEX_SCALP',       title: 'Sensex Scalping',         subtitle: '1-Min Scalping · SENSEX',    icon: '🎯', index: 'SENSEX',     breakout: false },
+  { key: 'SENSEX_BREAKOUT',    title: 'Sensex Breakout',         subtitle: '5-Min Breakout · SENSEX',    icon: '🌩️', index: 'SENSEX',     breakout: true  },
 ];
 
-// Groups the sidebar nav into two sections, one per underlying index.
+// Groups the sidebar nav into sections, one per underlying index.
 const STRATEGY_GROUPS = [
   { key: 'NIFTY',     title: 'NIFTY',      icon: '⚡' },
   { key: 'BANKNIFTY', title: 'BANK NIFTY', icon: '🏦' },
+  { key: 'SENSEX',    title: 'SENSEX',     icon: '🎯' },
 ];
 
 // Per-key runtime state: { currentSession, savedConfig, pnlFrozen }
@@ -269,7 +272,8 @@ function applyRoleVisibility() {
 function updateQtyDisplay(key) {
   const lots  = parseInt(document.getElementById('cfg-lot-qty-' + key)?.value) || 1;
   const strat = STRATEGIES.find(s => s.key === key);
-  const lotSize = strat && strat.index === 'BANKNIFTY' ? 30 : 65;
+  // Display-only preview — the backend (TradingConfig.lotSizeForInstrument()) is authoritative.
+  const lotSize = strat && strat.index === 'BANKNIFTY' ? 30 : strat && strat.index === 'SENSEX' ? 20 : 65;
   const total = document.getElementById('qty-total-' + key);
   if (total) total.textContent = (lots * lotSize).toLocaleString('en-IN');
   const totalUser = document.getElementById('qty-total-user-' + key);

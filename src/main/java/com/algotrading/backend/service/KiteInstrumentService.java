@@ -42,25 +42,43 @@ public class KiteInstrumentService {
     }
 
     /**
-     * Returns futures instruments for the given index ("NIFTY" or "BANKNIFTY"),
+     * Returns futures instruments for the given index ("NIFTY", "BANKNIFTY" or "SENSEX"),
      * with the underlying spot index prepended as the first entry.
      */
     public List<KiteInstrument> getFuturesFor(String indexName) {
         ensureCacheLoaded();
         List<KiteInstrument> result = new ArrayList<>();
         boolean isBankNifty = "BANKNIFTY".equals(indexName);
-        result.add(KiteInstrument.builder()
-                .instrumentToken(isBankNifty ? 260105L : 256265L)
-                .tradingsymbol(isBankNifty ? "NIFTY BANK" : "NIFTY 50")
-                .name(isBankNifty ? "NIFTY BANK" : "NIFTY 50")
-                .instrumentType("EQ")
-                .segment("INDICES")
-                .exchange("NSE")
-                .build());
+        boolean isSensex = "SENSEX".equals(indexName);
+        if (isSensex) {
+            // SENSEX (BSE) instrument_token 265 is the commonly documented Kite Connect value —
+            // verify against a live /instruments dump before trusting it in production. This spot
+            // entry is display-only (top-of-dropdown reference price); getting it wrong does NOT
+            // affect strike/CE/PE resolution, which is looked up by name+expiry+strike from the
+            // BFO cache below, independent of this token.
+            result.add(KiteInstrument.builder()
+                    .instrumentToken(265L)
+                    .tradingsymbol("SENSEX")
+                    .name("SENSEX")
+                    .instrumentType("EQ")
+                    .segment("INDICES")
+                    .exchange("BSE")
+                    .build());
+        } else {
+            result.add(KiteInstrument.builder()
+                    .instrumentToken(isBankNifty ? 260105L : 256265L)
+                    .tradingsymbol(isBankNifty ? "NIFTY BANK" : "NIFTY 50")
+                    .name(isBankNifty ? "NIFTY BANK" : "NIFTY 50")
+                    .instrumentType("EQ")
+                    .segment("INDICES")
+                    .exchange("NSE")
+                    .build());
+        }
+        String futSegment = isSensex ? "BFO-FUT" : "NFO-FUT";
         instrumentCache.stream()
                 .filter(i -> indexName.equals(i.getName()))
                 .filter(i -> "FUT".equals(i.getInstrumentType()))
-                .filter(i -> "NFO-FUT".equals(i.getSegment()))
+                .filter(i -> futSegment.equals(i.getSegment()))
                 .sorted(Comparator.comparing(KiteInstrument::getExpiry))
                 .forEach(result::add);
         return result;
@@ -102,7 +120,7 @@ public class KiteInstrumentService {
     public OptionChainResponse buildKiteOptionChain(String indexName, String futuresSymbol, double price,
                                                     ExpiryType expiryType) {
         List<KiteInstrument> options = getOptionsFor(indexName, expiryType, price);
-        int strikeGap = "BANKNIFTY".equals(indexName) ? 100 : STRIKE_GAP;
+        int strikeGap = ("BANKNIFTY".equals(indexName) || "SENSEX".equals(indexName)) ? 100 : STRIKE_GAP;
         int atmStrike = computeAtm(price, strikeGap);
 
         Map<Integer, OptionChainResponse.StrikeData> strikeMap = new LinkedHashMap<>();
@@ -152,8 +170,8 @@ public class KiteInstrumentService {
             result.put("CURRENT_WEEK", dates.get(0));
             result.put("NEXT_WEEK", dates.size() > 1 ? dates.get(1) : dates.get(0).plusWeeks(1));
         } else {
-            result.put("CURRENT_WEEK", calendarFallbackExpiry(ExpiryType.CURRENT_WEEK));
-            result.put("NEXT_WEEK",    calendarFallbackExpiry(ExpiryType.NEXT_WEEK));
+            result.put("CURRENT_WEEK", calendarFallbackExpiry(indexName, ExpiryType.CURRENT_WEEK));
+            result.put("NEXT_WEEK",    calendarFallbackExpiry(indexName, ExpiryType.NEXT_WEEK));
         }
         return result;
     }
@@ -243,25 +261,39 @@ public class KiteInstrumentService {
     }
 
     private void fetchAndCacheInstruments() {
+        List<KiteInstrument> mapped;
         try {
             log.info("Fetching NFO instruments from Kite SDK...");
             kiteConnect.setAccessToken(kite.getAccessToken());
             ArrayList<Instrument> instruments = (ArrayList<Instrument>) kiteConnect.getInstruments("NFO");
 
-            List<KiteInstrument> mapped = instruments.stream()
+            mapped = instruments.stream()
                     .map(this::toKiteInstrument)
                     .collect(Collectors.toList());
-
-            instrumentCache.clear();
-            instrumentCache.addAll(mapped);
-            lastFetchDate = LocalDate.now(ZoneId.of("Asia/Kolkata"));
-            log.info("Loaded {} NFO instruments from Kite SDK", instrumentCache.size());
         } catch (Exception e) {
-            // KiteException extends IOException → also caught here
-            log.error("Failed to fetch Kite instruments: {} — {}", e.getClass().getSimpleName(), e.getMessage());
+            log.error("Failed to fetch NFO instruments: {} — {}", e.getClass().getSimpleName(), e.getMessage());
+            return;
         } catch (KiteException e) {
-            throw new RuntimeException(e);
+            log.error("Failed to fetch NFO instruments: {}", e.getMessage());
+            return;
         }
+
+        // BFO (BSE F&O — SENSEX) fetched separately: failure here (e.g. segment not enabled on
+        // this account) must not wipe out the NFO data that just succeeded above.
+        try {
+            ArrayList<Instrument> bfoInstruments = (ArrayList<Instrument>) kiteConnect.getInstruments("BFO");
+            bfoInstruments.stream().map(this::toKiteInstrument).forEach(mapped::add);
+        } catch (Exception e) {
+            log.warn("Failed to fetch BFO instruments (SENSEX unavailable today): {} — {}",
+                    e.getClass().getSimpleName(), e.getMessage());
+        } catch (KiteException e) {
+            log.warn("Failed to fetch BFO instruments (SENSEX unavailable today): {}", e.getMessage());
+        }
+
+        instrumentCache.clear();
+        instrumentCache.addAll(mapped);
+        lastFetchDate = LocalDate.now(ZoneId.of("Asia/Kolkata"));
+        log.info("Loaded {} NFO+BFO instruments from Kite SDK", instrumentCache.size());
     }
 
     private KiteInstrument toKiteInstrument(Instrument i) {
@@ -306,8 +338,8 @@ public class KiteInstrumentService {
             // NEXT_WEEK → second distinct upcoming expiry, or +1 week if only one found
             return dates.size() > 1 ? dates.get(1) : dates.get(0).plusWeeks(1);
         }
-        // Fallback (no cache): naive Tuesday calculation
-        return calendarFallbackExpiry(type);
+        // Fallback (no cache): naive weekday calculation
+        return calendarFallbackExpiry(indexName, type);
     }
 
     /**
@@ -327,10 +359,14 @@ public class KiteInstrumentService {
                 .collect(Collectors.toList());
     }
 
-    /** Used only when instrument cache is empty (Kite not connected yet). */
-    private LocalDate calendarFallbackExpiry(ExpiryType type) {
+    /**
+     * Used only when instrument cache is empty (Kite not connected yet). NIFTY/BANKNIFTY expire
+     * Tuesday (NSE); SENSEX expires Thursday (BSE).
+     */
+    private LocalDate calendarFallbackExpiry(String indexName, ExpiryType type) {
+        DayOfWeek expiryWeekday = "SENSEX".equals(indexName) ? DayOfWeek.THURSDAY : DayOfWeek.TUESDAY;
         LocalDate d = LocalDate.now();
-        while (d.getDayOfWeek() != DayOfWeek.TUESDAY) {
+        while (d.getDayOfWeek() != expiryWeekday) {
             d = d.plusDays(1);
         }
         return type == ExpiryType.NEXT_WEEK ? d.plusWeeks(1) : d;

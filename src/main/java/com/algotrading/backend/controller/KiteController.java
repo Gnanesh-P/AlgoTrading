@@ -242,11 +242,11 @@ public class KiteController {
 
         String symbol = futuresSymbol;
         double price = niftyPrice != null ? niftyPrice : cache.getLastPrice(symbol);
-        if (price <= 0) price = "BANKNIFTY".equals(index) ? 48000 : 22000;  // fallback default
+        if (price <= 0) price = fallbackPriceFor(index);  // fallback default
 
         OptionChainResponse chain = kiteProperties.isConnected()
                 ? instrumentService.buildKiteOptionChain(index, symbol, price, expiryType)
-                : buildFallbackChain(symbol, price, expiryType, "BANKNIFTY".equals(index) ? 100 : 50);
+                : buildFallbackChain(symbol, price, expiryType, strikeGapFor(index));
 
         return ResponseEntity.ok(chain);
     }
@@ -260,8 +260,8 @@ public class KiteController {
 
         String symbol = futuresSymbol != null ? futuresSymbol : "NIFTY25APRFUT";
         double price = niftyPrice != null ? niftyPrice : cache.getLastPrice(symbol);
-        int strikeGap = "BANKNIFTY".equals(index) ? 100 : 50;
-        if (price <= 0) price = "BANKNIFTY".equals(index) ? 48000 : 22000;
+        int strikeGap = strikeGapFor(index);
+        if (price <= 0) price = fallbackPriceFor(index);
 
         OptionChainResponse currentWeek = kiteProperties.isConnected()
                 ? instrumentService.buildKiteOptionChain(index, symbol, price, ExpiryType.CURRENT_WEEK)
@@ -273,7 +273,7 @@ public class KiteController {
 
         Map<String, LocalDate> expiryDates = kiteProperties.isConnected()
                 ? instrumentService.getExpiryDates(index)
-                : Map.of("CURRENT_WEEK", getNextTuesday(), "NEXT_WEEK", getNextTuesday().plusWeeks(1));
+                : Map.of("CURRENT_WEEK", getNextExpiryWeekday(index), "NEXT_WEEK", getNextExpiryWeekday(index).plusWeeks(1));
 
         return ResponseEntity.ok(Map.of(
                 "currentWeek", currentWeek,
@@ -330,7 +330,9 @@ public class KiteController {
     private OptionChainResponse buildFallbackChain(String symbol, double price, ExpiryType expiryType, int strikeGap) {
         // Delegate to the existing offline option chain builder
         int atm = (int) (Math.round(price / strikeGap) * strikeGap);
-        String indexTag = (symbol != null && symbol.contains("BANKNIFTY")) ? "BANKNIFTY" : "NIFTY";
+        String indexTag = "NIFTY";
+        if (symbol != null && symbol.contains("BANKNIFTY")) indexTag = "BANKNIFTY";
+        else if (symbol != null && symbol.contains("SENSEX")) indexTag = "SENSEX";
         List<OptionChainResponse.StrikeData> strikes = new java.util.ArrayList<>();
         for (int s = atm - 400; s <= atm + 400; s += strikeGap) {
             String expTag = expiryType == ExpiryType.CURRENT_WEEK ? "CW" : "NW";
@@ -350,9 +352,22 @@ public class KiteController {
                 .build();
     }
 
-    private LocalDate getNextTuesday() {
+    /** Cosmetic-only fallback (Kite not connected): NIFTY/BANKNIFTY -> Tuesday, SENSEX -> Thursday. */
+    private LocalDate getNextExpiryWeekday(String index) {
+        java.time.DayOfWeek target = "SENSEX".equals(index)
+                ? java.time.DayOfWeek.THURSDAY : java.time.DayOfWeek.TUESDAY;
         LocalDate d = LocalDate.now();
-        while (d.getDayOfWeek().getValue() != 4) d = d.plusDays(1);
+        while (d.getDayOfWeek() != target) d = d.plusDays(1);
         return d;
+    }
+
+    private int strikeGapFor(String index) {
+        return ("BANKNIFTY".equals(index) || "SENSEX".equals(index)) ? 100 : 50;
+    }
+
+    private double fallbackPriceFor(String index) {
+        if ("BANKNIFTY".equals(index)) return 48000;
+        if ("SENSEX".equals(index)) return 80000;
+        return 22000;
     }
 }

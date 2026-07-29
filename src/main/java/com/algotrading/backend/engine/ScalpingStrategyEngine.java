@@ -230,8 +230,9 @@ public class ScalpingStrategyEngine implements TradingEngine {
         if (session != null && session.getConfig().getTradeMode() == TradeMode.LIVE
                 && kiteConnect != null) {
             try {
-                Map<String, LTPQuote> map = kiteConnect.getLTP(new String[]{"NFO:" + instrument});
-                LTPQuote q = map != null ? map.get("NFO:" + instrument) : null;
+                String key = session.getConfig().exchangeSegment() + ":" + instrument;
+                Map<String, LTPQuote> map = kiteConnect.getLTP(new String[]{key});
+                LTPQuote q = map != null ? map.get(key) : null;
                 if (q != null && q.lastPrice > 0) {
                     priceCache.put(instrument, q.lastPrice);
                     return q.lastPrice;
@@ -269,7 +270,7 @@ public class ScalpingStrategyEngine implements TradingEngine {
                 double limitPrice = roundToTick(ltp * 1.02);  // 1% above LTP — fills immediately, satisfies Zerodha market protection
                 OrderParams p = new OrderParams();
                 p.tradingsymbol = instrument;
-                p.exchange = Constants.EXCHANGE_NFO;
+                p.exchange = session.getConfig().exchangeSegment();
                 p.transactionType = Constants.TRANSACTION_TYPE_BUY;
                 p.orderType = Constants.ORDER_TYPE_LIMIT;
                 p.price = limitPrice;
@@ -311,7 +312,7 @@ public class ScalpingStrategyEngine implements TradingEngine {
                 double limitPrice = roundToTick(ltp * 0.98);  // 1% below LTP — fills immediately, satisfies Zerodha market protection
                 OrderParams p = new OrderParams();
                 p.tradingsymbol = instrument;
-                p.exchange = Constants.EXCHANGE_NFO;
+                p.exchange = session.getConfig().exchangeSegment();
                 p.transactionType = Constants.TRANSACTION_TYPE_SELL;
                 p.orderType = Constants.ORDER_TYPE_LIMIT;
                 p.price = limitPrice;
@@ -374,8 +375,9 @@ public class ScalpingStrategyEngine implements TradingEngine {
         }
         // Fallback: fresh LTP from Kite REST (much more accurate than stale priceCache)
         try {
-            Map<String, LTPQuote> map = kiteConnect.getLTP(new String[]{"NFO:" + instrument});
-            LTPQuote q = map != null ? map.get("NFO:" + instrument) : null;
+            String key = session.getConfig().exchangeSegment() + ":" + instrument;
+            Map<String, LTPQuote> map = kiteConnect.getLTP(new String[]{key});
+            LTPQuote q = map != null ? map.get(key) : null;
             if (q != null && q.lastPrice > 0) {
                 log.info("[{}] Using fresh LTP {} for {} as fill price (order poll timed out)", username, q.lastPrice, instrument);
                 priceCache.put(instrument, q.lastPrice);
@@ -423,7 +425,9 @@ public class ScalpingStrategyEngine implements TradingEngine {
         // silently fell back to NIFTY when the futures dropdown hadn't resolved a real Kite
         // tradingsymbol yet (e.g. Kite not connected → dropdown only offers the synthetic
         // spot-index placeholder "NIFTY BANK", which does not contain "BANKNIFTY").
-        return session.getConfig().isBankNifty() ? "BANKNIFTY" : "NIFTY";
+        TradingConfig cfg = session.getConfig();
+        if (cfg.isSensex()) return "SENSEX";
+        return cfg.isBankNifty() ? "BANKNIFTY" : "NIFTY";
     }
 
     public synchronized TradeSession startSession(TradingConfig config,

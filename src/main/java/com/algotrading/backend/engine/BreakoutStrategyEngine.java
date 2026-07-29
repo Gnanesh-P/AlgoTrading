@@ -331,12 +331,14 @@ public class BreakoutStrategyEngine implements TradingEngine {
     }
 
     /**
-     * NIFTY vs BANKNIFTY index prefix for Kite instrument lookups — mirrors
+     * NIFTY vs BANKNIFTY vs SENSEX index prefix for Kite instrument lookups — mirrors
      * ScalpingStrategyEngine's indexPrefix(), driven by the authoritative strategyKey
-     * (via config.isBankNifty()) rather than sniffing symbol text.
+     * (via config.isBankNifty()/isSensex()) rather than sniffing symbol text.
      */
     private String indexPrefix() {
-        return session.getConfig().isBankNifty() ? "BANKNIFTY" : "NIFTY";
+        TradingConfig cfg = session.getConfig();
+        if (cfg.isSensex()) return "SENSEX";
+        return cfg.isBankNifty() ? "BANKNIFTY" : "NIFTY";
     }
 
     private void lockAndSubscribeAtmOptions() {
@@ -496,8 +498,9 @@ public class BreakoutStrategyEngine implements TradingEngine {
         if (session != null && session.getConfig() != null
                 && session.getConfig().getTradeMode() == TradeMode.LIVE && kiteConnect != null) {
             try {
-                Map<String, LTPQuote> map = kiteConnect.getLTP(new String[]{"NFO:" + instrument});
-                LTPQuote q = map != null ? map.get("NFO:" + instrument) : null;
+                String key = session.getConfig().exchangeSegment() + ":" + instrument;
+                Map<String, LTPQuote> map = kiteConnect.getLTP(new String[]{key});
+                LTPQuote q = map != null ? map.get(key) : null;
                 if (q != null && q.lastPrice > 0) {
                     priceCache.put(instrument, q.lastPrice);
                     return q.lastPrice;
@@ -534,7 +537,7 @@ public class BreakoutStrategyEngine implements TradingEngine {
                 double limitPrice = roundToTick(ltp * 1.02);
                 OrderParams p = new OrderParams();
                 p.tradingsymbol = instrument;
-                p.exchange = Constants.EXCHANGE_NFO;
+                p.exchange = session.getConfig().exchangeSegment();
                 p.transactionType = Constants.TRANSACTION_TYPE_BUY;
                 p.orderType = Constants.ORDER_TYPE_LIMIT;
                 p.price = limitPrice;
@@ -574,7 +577,7 @@ public class BreakoutStrategyEngine implements TradingEngine {
                 double limitPrice = roundToTick(ltp * 0.98);
                 OrderParams p = new OrderParams();
                 p.tradingsymbol = instrument;
-                p.exchange = Constants.EXCHANGE_NFO;
+                p.exchange = session.getConfig().exchangeSegment();
                 p.transactionType = Constants.TRANSACTION_TYPE_SELL;
                 p.orderType = Constants.ORDER_TYPE_LIMIT;
                 p.price = limitPrice;
@@ -625,8 +628,9 @@ public class BreakoutStrategyEngine implements TradingEngine {
             }
         }
         try {
-            Map<String, LTPQuote> map = kiteConnect.getLTP(new String[]{"NFO:" + instrument});
-            LTPQuote q = map != null ? map.get("NFO:" + instrument) : null;
+            String key = session.getConfig().exchangeSegment() + ":" + instrument;
+            Map<String, LTPQuote> map = kiteConnect.getLTP(new String[]{key});
+            LTPQuote q = map != null ? map.get(key) : null;
             if (q != null && q.lastPrice > 0) {
                 priceCache.put(instrument, q.lastPrice);
                 return q.lastPrice;

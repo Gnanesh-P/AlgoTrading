@@ -23,12 +23,16 @@ public class OptionInstrumentService {
 
     private static final int NIFTY_STRIKE_GAP = 50;
     private static final int BANKNIFTY_STRIKE_GAP = 100;
+    private static final int SENSEX_STRIKE_GAP = 100;
     private static final int STRIKE_RANGE = 400;
 
-    /** Strike step for the given futures/index instrument symbol (50 for NIFTY, 100 for BANKNIFTY). */
+    /** Strike step for the given futures/index instrument symbol (50 for NIFTY, 100 for BANKNIFTY/SENSEX). */
     public int strikeStepFor(String instrument) {
-        return (instrument != null && instrument.toUpperCase().contains("BANKNIFTY"))
-                ? BANKNIFTY_STRIKE_GAP : NIFTY_STRIKE_GAP;
+        if (instrument == null) return NIFTY_STRIKE_GAP;
+        String u = instrument.toUpperCase();
+        if (u.contains("BANKNIFTY")) return BANKNIFTY_STRIKE_GAP;
+        if (u.contains("SENSEX")) return SENSEX_STRIKE_GAP;
+        return NIFTY_STRIKE_GAP;
     }
 
     /**
@@ -40,7 +44,16 @@ public class OptionInstrumentService {
      * of the correct 100-point Bank Nifty step.
      */
     public int strikeStepFor(TradingConfig config) {
+        if (config.isSensex()) return SENSEX_STRIKE_GAP;
         return config.isBankNifty() ? BANKNIFTY_STRIKE_GAP : NIFTY_STRIKE_GAP;
+    }
+
+    /**
+     * Weekly expiry weekday for a session — TUESDAY for NIFTY/BANKNIFTY (NSE), THURSDAY for
+     * SENSEX (BSE). See {@link #findWeeklyExpiry(LocalDate, DayOfWeek)}.
+     */
+    private DayOfWeek expiryWeekdayFor(TradingConfig config) {
+        return config.isSensex() ? DayOfWeek.THURSDAY : DayOfWeek.TUESDAY;
     }
 
     private static final Set<LocalDate> NSE_HOLIDAYS = Set.of(
@@ -111,9 +124,10 @@ public class OptionInstrumentService {
 
     public void resolveAndLockInstruments(TradingConfig config, TradeSession session,
                                           double currentNiftyPrice) {
+        DayOfWeek expiryWeekday = expiryWeekdayFor(config);
         if (config.getStrikeMode() == StrikeMode.AUTO_ATM) {
             LocalDate today      = LocalDate.now(ZoneId.of("Asia/Kolkata"));
-            LocalDate thisExpiry = findWeeklyExpiry(today);
+            LocalDate thisExpiry = findWeeklyExpiry(today, expiryWeekday);
             LocalDate autoExpiry = getAutoExpiryDate();
 
             boolean isNextWeek = autoExpiry.isAfter(thisExpiry);
@@ -146,8 +160,8 @@ public class OptionInstrumentService {
 
             // Expiry label from config's expiryType
             LocalDate today  = LocalDate.now(ZoneId.of("Asia/Kolkata"));
-            LocalDate expiry = getExpiryDate(config.getExpiryType());
-            LocalDate thisExpiry = findWeeklyExpiry(today);
+            LocalDate expiry = getExpiryDate(config.getExpiryType(), expiryWeekday);
+            LocalDate thisExpiry = findWeeklyExpiry(today, expiryWeekday);
             boolean isNextWeek = expiry.isAfter(thisExpiry);
             String expiryLabel = (isNextWeek ? "Next Week" : "Current Week")
                     + " (" + expiry.format(DateTimeFormatter.ofPattern("dd MMM", Locale.ENGLISH)) + ")";
@@ -207,24 +221,35 @@ public class OptionInstrumentService {
     }
 
     private LocalDate getExpiryDate(ExpiryType expiryType) {
+        return getExpiryDate(expiryType, DayOfWeek.TUESDAY);
+    }
+
+    private LocalDate getExpiryDate(ExpiryType expiryType, DayOfWeek expiryWeekday) {
         LocalDate today = LocalDate.now(ZoneId.of("Asia/Kolkata"));
-        LocalDate expiry = findWeeklyExpiry(today);
+        LocalDate expiry = findWeeklyExpiry(today, expiryWeekday);
         if (expiryType == ExpiryType.NEXT_WEEK) {
-            expiry = findWeeklyExpiry(expiry.plusDays(1));
+            expiry = findWeeklyExpiry(expiry.plusDays(1), expiryWeekday);
         }
         return expiry;
     }
 
     /**
-     * NIFTY weekly options expire every TUESDAY (NSE rule).
-     * If that Tuesday is an NSE holiday the expiry moves to the preceding trading day.
+     * NIFTY/BANKNIFTY weekly options expire every TUESDAY (NSE rule); SENSEX expires every
+     * THURSDAY (BSE rule) — see {@link #expiryWeekdayFor(TradingConfig)}.
+     * If the target weekday is a holiday, expiry moves to the preceding trading day.
      */
     private LocalDate findWeeklyExpiry(LocalDate from) {
+        return findWeeklyExpiry(from, DayOfWeek.TUESDAY);
+    }
+
+    private LocalDate findWeeklyExpiry(LocalDate from, DayOfWeek expiryWeekday) {
         LocalDate d = from;
-        while (d.getDayOfWeek() != DayOfWeek.TUESDAY) {
+        while (d.getDayOfWeek() != expiryWeekday) {
             d = d.plusDays(1);
         }
-        // If Tuesday is a holiday, step back until we hit a trading day
+        // If the expiry weekday is a holiday, step back until we hit a trading day.
+        // NSE_HOLIDAYS is shared across NSE/BSE — Indian exchange holidays are effectively
+        // identical across NSE and BSE, so no separate BSE holiday table is needed.
         while (NSE_HOLIDAYS.contains(d)
                 || d.getDayOfWeek() == DayOfWeek.SATURDAY
                 || d.getDayOfWeek() == DayOfWeek.SUNDAY) {

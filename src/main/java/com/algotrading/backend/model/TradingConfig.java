@@ -22,6 +22,9 @@ public class TradingConfig {
 
     public static final int NIFTY_LOT_SIZE = 65;
     public static final int BANKNIFTY_LOT_SIZE = 30;
+    // NSE/BSE revise F&O lot sizes periodically (quarterly review) — verify this against your
+    // broker/the current NSE circular before running SENSEX live. Best known value at time of writing.
+    public static final int SENSEX_LOT_SIZE = 20;
 
     private String futuresInstrument;
     private String ceInstrument;
@@ -71,8 +74,27 @@ public class TradingConfig {
         return futuresInstrument != null && futuresInstrument.toUpperCase().contains("BANKNIFTY");
     }
 
+    /** SENSEX trades on the BSE (BFO segment), unlike NIFTY/BANKNIFTY which are NSE (NFO). */
+    public boolean isSensex() {
+        if (strategyKey != null) {
+            return strategyKey == StrategyKey.SENSEX_SCALP || strategyKey == StrategyKey.SENSEX_BREAKOUT;
+        }
+        return futuresInstrument != null && futuresInstrument.toUpperCase().contains("SENSEX");
+    }
+
     public int lotSizeForInstrument() {
+        if (isSensex()) return SENSEX_LOT_SIZE;
         return isBankNifty() ? BANKNIFTY_LOT_SIZE : NIFTY_LOT_SIZE;
+    }
+
+    /**
+     * Kite exchange segment for this config's instruments — "BFO" for SENSEX (BSE F&O),
+     * "NFO" for everything else (NSE F&O). Used for both order placement (OrderParams.exchange)
+     * and REST quote-key prefixes ("NFO:SYMBOL" / "BFO:SYMBOL"), since the string value happens
+     * to match com.zerodhatech.kiteconnect.utils.Constants.EXCHANGE_NFO/EXCHANGE_BFO exactly.
+     */
+    public String exchangeSegment() {
+        return isSensex() ? "BFO" : "NFO";
     }
 
     public int getTotalQuantity() {
