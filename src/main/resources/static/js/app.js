@@ -324,6 +324,17 @@ function populateStartTimes(key) {
   }
 }
 
+// Returns true if the given "HH:mm" is at or before the current IST clock time — used to catch
+// a stale start time (e.g. saved earlier in the day, strategy stopped, then Start clicked again
+// later without re-saving the config) before it reaches the backend.
+function isPastIstTime(hhmm) {
+  if (!hhmm) return false;
+  const nowIst = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
+  const nowMins = nowIst.getHours() * 60 + nowIst.getMinutes();
+  const [h, m] = hhmm.split(':').map(Number);
+  return (h * 60 + m) <= nowMins;
+}
+
 function logout() {
   token = '';
   try { localStorage.removeItem('jwtToken');    } catch(_) {}
@@ -527,6 +538,12 @@ async function saveConfig(key) {
 
   const startTimeSel = document.getElementById('cfg-start-time-' + key);
 
+  if (isPastIstTime(startTimeSel.value)) {
+    showMsg('config-msg-' + key, `❌ Start time ${startTimeSel.value} has already passed. Please select a different start time.`, 'error');
+    populateStartTimes(key);
+    return;
+  }
+
   const futOpt = futSel.selectedOptions[0];
   const futureToken = futOpt ? parseInt(futOpt.dataset.token || 0) : 0;
 
@@ -586,6 +603,18 @@ async function saveConfig(key) {
 
 async function startStrategy(key) {
   if (!cardState[key].savedConfig) await saveConfig(key);
+
+  // Guard against a STALE cached config: e.g. the user saved/started with 09:30 earlier, later
+  // stopped, and now clicks Start again without re-saving — savedConfig still holds the old
+  // entryStartTime even though the dropdown itself has since moved on. Block and make them fix it.
+  const savedTime = cardState[key].savedConfig && cardState[key].savedConfig.entryStartTime;
+  if (savedTime && isPastIstTime(savedTime)) {
+    showMsg('config-msg-' + key,
+      `❌ Start time ${savedTime} has already passed. Please select a different start time and save the configuration again.`,
+      'error');
+    populateStartTimes(key);
+    return;
+  }
 
   cardState[key].pnlFrozen = false;
 
