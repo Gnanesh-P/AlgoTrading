@@ -60,21 +60,18 @@ window.onload = () => {
 
 function init() {
   const detail = document.getElementById('strategy-detail');
-  detail.innerHTML = STRATEGIES.map(buildCardHtml).join('');
+  detail.innerHTML = STRATEGIES.map(buildCardHtml).join('') + buildOiPanelHtml();
 
   const sidebar = document.getElementById('strategy-sidebar');
   if (sidebar) sidebar.innerHTML = buildSidebarHtml();
-
-  const oiPanel = document.getElementById('oi-panel');
-  if (oiPanel) oiPanel.innerHTML = buildOiPanelHtml();
 
   STRATEGIES.forEach(s => {
     cardState[s.key] = { currentSession: null, savedConfig: null, pnlFrozen: false };
   });
 
-  // Restore the last-viewed strategy (per browser), falling back to the first card.
+  // Restore the last-viewed strategy/view (per browser), falling back to the first card.
   const stored = localStorage.getItem('selectedStrategy');
-  selectStrategy(STRATEGIES.some(s => s.key === stored) ? stored : STRATEGIES[0].key);
+  selectView(VIEW_KEYS.includes(stored) ? stored : STRATEGIES[0].key);
 
   applyRoleVisibility();
   connectWebSocket();
@@ -146,11 +143,19 @@ const OI_SIGNAL_LABELS = {
   STRONG_BEARISH_REVERSAL: '🔻 Strong Bearish Reversal',
 };
 
+// Rendered as just another selectable card in the sidebar/detail workspace — same
+// `.strategy-card`/`active-view` show-hide mechanism as the 4 strategy cards (see selectView()).
 function buildOiPanelHtml() {
   return `
-    <div class="oi-panel-header">
-      <h3>🎯 NIFTY Reversal Signal</h3>
-      <span class="oi-panel-sub" id="oi-expiry">—</span>
+  <div class="panel strategy-card oi-panel-card" id="card-OI_SIGNAL">
+    <div class="card-header">
+      <div class="card-title-group">
+        <span class="card-icon">🎯</span>
+        <div>
+          <div style="font-weight:700;font-size:15px;">NIFTY Reversal Signal</div>
+          <div class="card-subtitle" id="oi-expiry">—</div>
+        </div>
+      </div>
     </div>
     <div class="oi-placeholder" id="oi-placeholder">Connect Kite to see the live NIFTY OI signal</div>
     <div id="oi-panel-content" class="hidden">
@@ -180,7 +185,8 @@ function buildOiPanelHtml() {
       <ul class="oi-reasoning-list" id="oi-reasoning-list"></ul>
 
       <div class="oi-disclaimer">Heuristic read of OI/PCR positioning — not financial advice. Updated <span id="oi-asof">—</span></div>
-    </div>`;
+    </div>
+  </div>`;
 }
 
 async function refreshOiSignal() {
@@ -189,10 +195,14 @@ async function refreshOiSignal() {
     const data = await get('/api/oi-signal');
     const placeholder = document.getElementById('oi-placeholder');
     const content = document.getElementById('oi-panel-content');
+    const sideDot = document.getElementById('oi-side-dot');
+    const sideStatus = document.getElementById('oi-side-status');
 
     if (!data || !data.dataAvailable) {
       if (placeholder) { placeholder.textContent = (data && data.message) || 'OI data unavailable'; placeholder.classList.remove('hidden'); }
       if (content) content.classList.add('hidden');
+      if (sideDot) sideDot.className = 'side-dot side-dot-idle';
+      if (sideStatus) sideStatus.textContent = 'No data';
       return;
     }
     if (placeholder) placeholder.classList.add('hidden');
@@ -206,11 +216,14 @@ async function refreshOiSignal() {
     setText('oi-call-change', (data.callOiChangePct >= 0 ? '+' : '') + (data.callOiChangePct || 0).toFixed(1) + '%');
     setText('oi-put-change', (data.putOiChangePct >= 0 ? '+' : '') + (data.putOiChangePct || 0).toFixed(1) + '%');
 
+    const signalClass = String(data.signal || 'neutral').toLowerCase().replace(/_/g, '-');
     const badge = document.getElementById('oi-signal-badge');
     if (badge) {
       badge.textContent = OI_SIGNAL_LABELS[data.signal] || data.signal;
-      badge.className = 'oi-signal-badge oi-signal-' + String(data.signal || 'neutral').toLowerCase().replace(/_/g, '-');
+      badge.className = 'oi-signal-badge oi-signal-' + signalClass;
     }
+    if (sideDot) sideDot.className = 'side-dot oi-side-dot-' + signalClass;
+    if (sideStatus) sideStatus.textContent = OI_SIGNAL_LABELS[data.signal] || data.signal || '—';
 
     const marker = document.getElementById('oi-gauge-marker');
     if (marker) {
@@ -719,7 +732,7 @@ async function fetchAndRenderStatusAll() {
     // (fresh browser/localStorage) and exactly one is already running, jump straight to it.
     if (!firstStatusPollDone && localStorage.getItem('selectedStrategy') === null
         && runningCount === 1 && firstActiveKey) {
-      selectStrategy(firstActiveKey);
+      selectView(firstActiveKey);
     }
     firstStatusPollDone = true;
 
@@ -727,26 +740,38 @@ async function fetchAndRenderStatusAll() {
     if (badge) badge.textContent = `${runningCount} / ${STRATEGIES.length} Running`;
     const stopAllBtn = document.getElementById('btn-stop-all');
     if (stopAllBtn) stopAllBtn.disabled = runningCount === 0;
-    updateSidebarCumulativePnl();
+    updateSidebarPnlSummary();
   } catch (_) {
     STRATEGIES.forEach(s => setStrategyButtonsLoading(s.key, false));
   }
 }
 
-// Sums totalPnL across only the currently-active strategies, straight from the same session
-// data already rendered in each card/sidebar item — no separate API call needed.
-function updateSidebarCumulativePnl() {
-  const el = document.getElementById('sidebar-cumulative-pnl-value');
-  if (!el) return;
+// Two numbers, both computed straight from the same session data already rendered in each
+// card/sidebar item — no separate API call needed:
+//  - Active P&L:      totalPnL summed over strategies currently running/waiting only.
+//  - Total P&L (Today): totalPnL summed over EVERY strategy that has a session today, active
+//    or already stopped — e.g. 2 running + 2 stopped still counts all 4 here.
+function updateSidebarPnlSummary() {
+  const activeEl = document.getElementById('sidebar-active-pnl-value');
+  const totalEl  = document.getElementById('sidebar-total-pnl-value');
+  if (!activeEl && !totalEl) return;
 
-  const activePnl = STRATEGIES.reduce((sum, strat) => {
+  let activePnl = 0, totalPnl = 0;
+  STRATEGIES.forEach(strat => {
     const s = cardState[strat.key] && cardState[strat.key].currentSession;
-    return (s && s.active) ? sum + (s.totalPnL || 0) : sum;
-  }, 0);
+    if (!s) return;
+    totalPnl += (s.totalPnL || 0);
+    if (s.active) activePnl += (s.totalPnL || 0);
+  });
 
-  el.textContent = (activePnl >= 0 ? '₹' : '-₹') + fmt(Math.abs(activePnl));
-  el.classList.toggle('scp-pos', activePnl >= 0);
-  el.classList.toggle('scp-neg', activePnl < 0);
+  const setVal = (el, val) => {
+    if (!el) return;
+    el.textContent = (val >= 0 ? '₹' : '-₹') + fmt(Math.abs(val));
+    el.classList.toggle('scp-pos', val >= 0);
+    el.classList.toggle('scp-neg', val < 0);
+  };
+  setVal(activeEl, activePnl);
+  setVal(totalEl, totalPnl);
 }
 
 function renderIdleCard(key) {
@@ -791,7 +816,13 @@ function renderSession(key, s) {
     setText('cfg-chip-strike-' + key, '✋ Manual Strike');
     if (s.lockedCeInstrument) setText('cfg-chip-ce-' + key, 'CE: ' + s.lockedCeInstrument);
     if (s.lockedPeInstrument) setText('cfg-chip-pe-' + key, 'PE: ' + s.lockedPeInstrument);
-    setText('cfg-chip-expiry-' + key, s.lockedExpiryLabel || '—');
+    // Bank Nifty trades monthly now — swap "Week" -> "Month" in the backend's label text for
+    // display only (e.g. "Current Week (28 Jul)" -> "Current Month (28 Jul)").
+    const strat = STRATEGIES.find(x => x.key === key);
+    const expiryLabel = strat && strat.index === 'BANKNIFTY'
+      ? (s.lockedExpiryLabel || '').replace(/Week/g, 'Month')
+      : s.lockedExpiryLabel;
+    setText('cfg-chip-expiry-' + key, expiryLabel || '—');
   }
 
   const stateEl = document.getElementById('s-state-' + key);
@@ -1361,14 +1392,18 @@ function escapeHtml(str) {
 // by clicking a nav item. All 4 cards stay mounted (hidden via CSS) so status polling/WebSocket
 // updates keep every strategy live in the background regardless of which one is on screen.
 
-function selectStrategy(key) {
+// All "views" that can be shown in the detail panel: the 4 strategy cards plus the NIFTY OI
+// signal card (moved into the sidebar nav + detail panel, same selection mechanism as a strategy).
+const VIEW_KEYS = [...STRATEGIES.map(s => s.key), 'OI_SIGNAL'];
+
+function selectView(key) {
   selectedStrategy = key;
   localStorage.setItem('selectedStrategy', key);
 
-  STRATEGIES.forEach(s => {
-    const card = document.getElementById('card-' + s.key);
-    const item = document.getElementById('side-item-' + s.key);
-    const isActive = s.key === key;
+  VIEW_KEYS.forEach(k => {
+    const card = document.getElementById('card-' + k);
+    const item = document.getElementById('side-item-' + k);
+    const isActive = k === key;
     if (card) card.classList.toggle('active-view', isActive);
     if (item) item.classList.toggle('active', isActive);
   });
@@ -1380,7 +1415,7 @@ function selectStrategy(key) {
 function buildSidebarHtml() {
   const groups = STRATEGY_GROUPS.map(g => {
     const items = STRATEGIES.filter(s => s.index === g.key).map(s => `
-        <div class="side-item" id="side-item-${s.key}" onclick="selectStrategy('${s.key}')">
+        <div class="side-item" id="side-item-${s.key}" onclick="selectView('${s.key}')">
           <span class="side-item-icon">${s.icon}</span>
           <div class="side-item-main">
             <div class="side-item-title">${s.breakout ? 'Breakout' : 'Scalping'}</div>
@@ -1400,11 +1435,34 @@ function buildSidebarHtml() {
       </div>`;
   }).join('');
 
-  return groups + `
+  const oiGroup = `
+      <div class="side-group">
+        <div class="side-group-label">📡 MARKET DATA</div>
+        <div class="side-item" id="side-item-OI_SIGNAL" onclick="selectView('OI_SIGNAL')">
+          <span class="side-item-icon">🎯</span>
+          <div class="side-item-main">
+            <div class="side-item-title">NIFTY Reversal Signal</div>
+            <div class="side-item-sub">
+              <span class="side-dot side-dot-idle" id="oi-side-dot"></span>
+              <span id="oi-side-status">—</span>
+            </div>
+          </div>
+        </div>
+      </div>`;
+
+  return groups + oiGroup + `
     <div class="sidebar-stopall-wrap">
       <div class="sidebar-cumulative-pnl" id="sidebar-cumulative-pnl">
-        <div class="scp-label">Cumulative P&amp;L (Active)</div>
-        <div class="scp-value" id="sidebar-cumulative-pnl-value">₹0.00</div>
+        <div class="scp-row">
+          <div class="scp-col">
+            <div class="scp-label">Active P&amp;L</div>
+            <div class="scp-value" id="sidebar-active-pnl-value">₹0.00</div>
+          </div>
+          <div class="scp-col">
+            <div class="scp-label">Total P&amp;L (Today)</div>
+            <div class="scp-value" id="sidebar-total-pnl-value">₹0.00</div>
+          </div>
+        </div>
       </div>
       <button id="btn-stop-all" class="btn btn-danger btn-lg btn-full" onclick="stopAllStrategies()" disabled title="Stop every active strategy">🛑 Stop All</button>
     </div>`;
@@ -1415,13 +1473,18 @@ function buildCardHtml(s) {
   const k = s.key;
   // Manual strike selection only — Auto ATM has been removed, so the strike-mode picker
   // is gone entirely and the CE/PE strike dropdowns are always shown.
+  // Bank Nifty now trades monthly contracts (NSE moved it off weekly expiry) — the dropdown
+  // values stay CURRENT_WEEK/NEXT_WEEK (that's what the backend expects), only the label text
+  // shown to the user changes for Bank Nifty cards.
+  const expiryOptCurrent = s.index === 'BANKNIFTY' ? 'Current Month' : 'Current Week';
+  const expiryOptNext    = s.index === 'BANKNIFTY' ? 'Next Month'    : 'Next Week';
   const strikeModeBlock = `
         <div class="form-row">
           <div class="form-group">
             <label>Expiry</label>
             <select id="cfg-expiry-${k}">
-              <option value="CURRENT_WEEK">Current Week</option>
-              <option value="NEXT_WEEK">Next Week</option>
+              <option value="CURRENT_WEEK">${expiryOptCurrent}</option>
+              <option value="NEXT_WEEK">${expiryOptNext}</option>
             </select>
           </div>
         </div>
@@ -1457,6 +1520,8 @@ function buildCardHtml(s) {
       <span id="strategy-badge-${k}" class="badge badge-idle">IDLE</span>
     </div>
 
+    <div class="card-body-grid">
+    <div class="card-col-left">
     <details class="card-config">
       <summary>Configuration</summary>
       <div class="form-row">
@@ -1567,7 +1632,9 @@ function buildCardHtml(s) {
       <span class="cfg-chip" id="cfg-chip-ce-${k}">CE —</span>
       <span class="cfg-chip" id="cfg-chip-pe-${k}">PE —</span>
     </div>
+    </div>
 
+    <div class="card-col-right">
     <div class="price-grid">
       <div class="price-card ${s.breakout ? 'hidden' : ''}">
         <div class="price-label" id="futures-label-${k}">FUT</div>
@@ -1736,6 +1803,8 @@ ${s.breakout ? `
       </div>
       <div class="usc-date" id="usc-date-${k}">—</div>
       <div class="usc-note">Trade details are managed by the system. Contact admin for a full report.</div>
+    </div>
+    </div>
     </div>
   </div>`;
 }

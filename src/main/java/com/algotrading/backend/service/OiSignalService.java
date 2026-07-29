@@ -177,7 +177,8 @@ public class OiSignalService {
                 .asOf(LocalDateTime.now(ZoneId.of("Asia/Kolkata")))
                 .build();
 
-        notifyIfSignalChanged(response);
+        // Telegram alert disabled for now — re-enable by uncommenting the line below.
+        // notifyIfSignalChanged(response);
         return response;
     }
 

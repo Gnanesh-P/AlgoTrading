@@ -170,7 +170,7 @@ select option { background: var(--bg3); }
 /* ===== WORKSPACE: sidebar nav + single detail panel ===== */
 .workspace {
   display: grid;
-  grid-template-columns: 260px 1fr 320px;
+  grid-template-columns: 260px 1fr;
   align-items: start;
   min-height: calc(100vh - 90px);
 }
@@ -193,11 +193,14 @@ select option { background: var(--bg3); }
   margin-bottom: 12px; padding: 12px 14px; border-radius: 10px;
   background: var(--bg3); border: 1px solid var(--border); text-align: center;
 }
+.scp-row { display: flex; gap: 8px; }
+.scp-col { flex: 1; min-width: 0; }
+.scp-col + .scp-col { border-left: 1px solid var(--border); padding-left: 8px; }
 .scp-label {
-  font-size: 10px; font-weight: 700; color: var(--text2); text-transform: uppercase;
-  letter-spacing: 0.5px; margin-bottom: 4px;
+  font-size: 9px; font-weight: 700; color: var(--text2); text-transform: uppercase;
+  letter-spacing: 0.4px; margin-bottom: 4px; white-space: nowrap;
 }
-.scp-value { font-family: monospace; font-size: 22px; font-weight: 700; color: var(--text2); }
+.scp-value { font-family: monospace; font-size: 15px; font-weight: 700; color: var(--text2); }
 .scp-value.scp-pos { color: #22c55e; }
 .scp-value.scp-neg { color: #f43f5e; }
 .side-group-label {
@@ -236,6 +239,11 @@ select option { background: var(--bg3); }
 .side-dot-trailingstop { background: #22c55e; }
 .side-dot-eod        { background: var(--text2); }
 
+/* NIFTY OI signal nav item dot — mirrors the oi-signal-* badge colors */
+.oi-side-dot-strong-bullish-reversal, .oi-side-dot-bullish { background: #22c55e; }
+.oi-side-dot-neutral    { background: var(--text2); }
+.oi-side-dot-bearish, .oi-side-dot-strong-bearish-reversal { background: #f43f5e; }
+
 /* P/L only makes sense to show while a strategy is actually live — hidden otherwise. */
 .side-item-pnl { display: none; font-family: monospace; font-size: 12px; font-weight: 700; color: var(--text2); flex-shrink: 0; }
 .side-item.is-live .side-item-pnl { display: inline-block; }
@@ -256,24 +264,24 @@ select option { background: var(--bg3); }
 
 .strategy-detail {
   padding: 20px 24px 56px;
-  max-width: 760px;
+  max-width: 1100px;
 }
-/* All 4 cards stay mounted for background polling — only the selected one is shown. */
+/* All 4 strategy cards + the OI signal card stay mounted for background polling — only the
+   selected one is shown (see selectView() in app.js). */
 .strategy-card { display: none; }
 .strategy-card.active-view { display: block; }
 .strategy-card.card-stopped-dim { opacity: 0.75; }
 
-/* ===== NIFTY OI / PCR REVERSAL SIGNAL PANEL ===== */
-.oi-panel {
-  position: sticky; top: 49px;
-  height: calc(100vh - 49px);
-  overflow-y: auto;
-  padding: 20px 18px;
-  background: var(--bg2); border-left: 1px solid var(--border);
+/* Inside a selected card: config/controls on the left, live data (price/candles/P&L/table) on
+   the right — collapses to a single column on narrower screens, see the media query below. */
+.card-body-grid {
+  display: grid; grid-template-columns: 380px 1fr; gap: 28px; align-items: start;
 }
-.oi-panel-header { display: flex; flex-direction: column; gap: 2px; margin-bottom: 14px; }
-.oi-panel-header h3 { font-size: 15px; font-weight: 700; }
-.oi-panel-sub { font-size: 11px; color: var(--text2); }
+.card-col-left, .card-col-right { min-width: 0; }
+
+/* ===== NIFTY OI / PCR REVERSAL SIGNAL — now just another card in the sidebar/detail workspace,
+   selected the same way as a strategy, instead of a separate sticky right-hand column. ===== */
+.oi-panel-card { max-width: 480px; }
 
 .oi-placeholder {
   font-size: 13px; color: var(--text2); background: var(--bg3); border: 1px solid var(--border);
@@ -663,10 +671,9 @@ select option { background: var(--bg3); }
   .sidebar-stopall-wrap .btn { padding: 8px 16px; font-size: 13px; white-space: nowrap; }
   .sidebar-cumulative-pnl { margin-bottom: 0; margin-right: 10px; padding: 6px 12px; }
   .sidebar-stopall-wrap { display: flex; align-items: center; }
-  .scp-value { font-size: 15px; }
+  .scp-value { font-size: 13px; }
   .strategy-detail { max-width: 100%; padding: 16px; }
-  .oi-panel {
-    position: static; height: auto; width: 100%;
-    border-left: none; border-top: 1px solid var(--border);
-  }
+}
+@media (max-width: 1000px) {
+  .card-body-grid { grid-template-columns: 1fr; gap: 0; }
 }
