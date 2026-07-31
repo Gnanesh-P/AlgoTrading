@@ -468,7 +468,7 @@ public class ScalpingStrategyEngine implements TradingEngine {
                 config.getTargetProfit(),
                 config.getTrailingProfit() > 0 ? String.format("%.2f", config.getTrailingProfit()) : "OFF"
         );
-        telegramService.sendStrategyMessage(startMsg);
+        sendTelegram(startMsg);
 
         session = TradeSession.builder()
                 .sessionId(UUID.randomUUID().toString())
@@ -748,7 +748,7 @@ public class ScalpingStrategyEngine implements TradingEngine {
                 String msg = String.format(
                         "🔄 <b>Position Reversed</b>\nFrom: <code>%s</code>\nTo: <code>%s</code>\nClose: <code>%.2f</code>\nFirst Close: <code>%.2f</code>",
                         openLeg.getOptionType(), newTradedType, currentClose, firstClose);
-                telegramService.sendStrategyMessage(msg);
+                sendTelegram(msg);
             }
             enterPosition(newTradedType, "REVERSAL_" + session.getReversalCount());
         }
@@ -800,7 +800,7 @@ public class ScalpingStrategyEngine implements TradingEngine {
                     isSell ? "SELL" : "BUY", optionType, instrument,
                     effectiveStrike > 0 ? String.valueOf(effectiveStrike) : "—",
                     entryPrice, leg.getQuantity(), reason);
-            telegramService.sendStrategyMessage(msg);
+            sendTelegram(msg);
         }
 
         log.info("[{}] Entered leg={} type={} instrument={} entry={} reason={}",
@@ -842,7 +842,7 @@ public class ScalpingStrategyEngine implements TradingEngine {
                     "🔚 <b>Position Exited</b>\nType: <code>%s</code>\nInstrument: <code>%s</code>\nEntry: <code>%.2f</code>\nExit: <code>%.2f</code>\nP/L: <code>%.2f</code>\nReason: <code>%s</code>",
                     openLeg.getOptionType(), openLeg.getInstrument(),
                     openLeg.getEntryPrice(), exitPrice, legPnl, reason);
-            telegramService.sendStrategyMessage(msg);
+            sendTelegram(msg);
         }
     }
 
@@ -912,7 +912,7 @@ public class ScalpingStrategyEngine implements TradingEngine {
                         "Time: <code>%s</code>\n\n" +
                         "💰 <b>P&amp;L: %.0f</b>",
                         username, stopReason, endT, totalPnl);
-                telegramService.sendStrategyMessage(simple);
+                sendTelegram(simple);
                 return;
             }
 
@@ -976,7 +976,7 @@ public class ScalpingStrategyEngine implements TradingEngine {
                     "#", "TYPE", "ENTRY", "ENTRY-T", "EXIT", "EXIT-T", "P&L", "REASON",
                     buildTextTable(), totalPnl);
 
-            telegramService.sendStrategyMessage(html);
+            sendTelegram(html);
         } catch (Exception e) {
             log.warn("[{}] Failed to send Telegram summary: {}", username, e.getMessage());
         }
@@ -984,6 +984,16 @@ public class ScalpingStrategyEngine implements TradingEngine {
 
     private boolean isAdmin() {
         return platformUser != null && "GNANESH".equalsIgnoreCase(platformUser.getRole());
+    }
+
+    /**
+     * Every Telegram alert for this engine goes through here so it's always prefixed with the
+     * strategy's friendly name — with up to 6 strategies potentially running concurrently across
+     * NIFTY/BANKNIFTY/SENSEX, a bare "Position Entered" message was ambiguous about which algo
+     * sent it.
+     */
+    private void sendTelegram(String msg) {
+        telegramService.sendStrategyMessage("📊 <b>" + strategyKey.displayName() + "</b>\n" + msg);
     }
 
     private int parseStrikeFromSymbol(String instrument) {

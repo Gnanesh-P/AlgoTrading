@@ -323,7 +323,7 @@ public class BreakoutStrategyEngine implements TradingEngine {
                 config.getStopLoss() > 0 ? String.format("%.2f", config.getStopLoss()) : "OFF",
                 config.getTargetProfit(),
                 config.getTrailingProfit() > 0 ? String.format("%.2f", config.getTrailingProfit()) : "OFF");
-        telegramService.sendStrategyMessage(startMsg);
+        sendTelegram(startMsg);
 
         log.info("[{}][BREAKOUT] Session {} started (direction={}, mode={})",
                 username, session.getSessionId(), config.getTradeDirection(), config.getTradeMode());
@@ -702,7 +702,7 @@ public class BreakoutStrategyEngine implements TradingEngine {
             String msg = String.format(
                     "✅ <b>Breakout Position Entered</b>\nType: <code>%s %s</code>\nInstrument: <code>%s</code>\nPrice: <code>%.2f</code>\nQty: <code>%d</code>\nReason: <code>%s</code>",
                     isSell ? "SELL" : "BUY", leg, instrument, entryPrice, entry.getQuantity(), reason);
-            telegramService.sendStrategyMessage(msg);
+            sendTelegram(msg);
         }
 
         log.info("[{}][BREAKOUT] Entered leg={} type={} instrument={} entry={} reason={}",
@@ -740,7 +740,7 @@ public class BreakoutStrategyEngine implements TradingEngine {
             String msg = String.format(
                     "🔚 <b>Breakout Position Exited</b>\nType: <code>%s</code>\nInstrument: <code>%s</code>\nEntry: <code>%.2f</code>\nExit: <code>%.2f</code>\nP/L: <code>%.2f</code>\nReason: <code>%s</code>",
                     openLeg.getOptionType(), openLeg.getInstrument(), openLeg.getEntryPrice(), exitPrice, legPnl, reason);
-            telegramService.sendStrategyMessage(msg);
+            sendTelegram(msg);
         }
     }
 
@@ -813,7 +813,7 @@ public class BreakoutStrategyEngine implements TradingEngine {
             String simple = String.format(
                     "🔔 <b>Breakout Strategy Stopped</b>\nUser: <code>%s</code>\nStop Reason: <code>%s</code>\nTime: <code>%s</code>\n\n💰 <b>P&amp;L: %.0f</b>",
                     username, stopReason, endT, totalPnl);
-            telegramService.sendStrategyMessage(simple);
+            sendTelegram(simple);
         } catch (Exception e) {
             log.warn("[{}][BREAKOUT] Failed to send Telegram summary: {}", username, e.getMessage());
         }
@@ -821,6 +821,16 @@ public class BreakoutStrategyEngine implements TradingEngine {
 
     private boolean isAdmin() {
         return platformUser != null && "GNANESH".equalsIgnoreCase(platformUser.getRole());
+    }
+
+    /**
+     * Every Telegram alert for this engine goes through here so it's always prefixed with the
+     * strategy's friendly name — with up to 6 strategies potentially running concurrently across
+     * NIFTY/BANKNIFTY/SENSEX, a bare "Position Entered" message was ambiguous about which algo
+     * sent it.
+     */
+    private void sendTelegram(String msg) {
+        telegramService.sendStrategyMessage("📊 <b>" + strategyKey.displayName() + "</b>\n" + msg);
     }
 
     // ── Status / lifecycle plumbing ────────────────────────────────────────────
