@@ -6,7 +6,8 @@ public enum StrategyKey {
     NIFTY_BREAKOUT,
     BANKNIFTY_BREAKOUT,
     SENSEX_SCALP,
-    SENSEX_BREAKOUT;
+    SENSEX_BREAKOUT,
+    NIFTY_BREAKOUT_V2;
 
     /** Friendly name shown at the top of every Telegram alert so concurrent algos are distinguishable. */
     public String displayName() {
@@ -17,6 +18,7 @@ public enum StrategyKey {
             case BANKNIFTY_BREAKOUT -> "Bank Nifty Breakout";
             case SENSEX_SCALP -> "Sensex Scalping";
             case SENSEX_BREAKOUT -> "Sensex Breakout";
+            case NIFTY_BREAKOUT_V2 -> "NIFTY Breakout V2";
         };
     }
 }

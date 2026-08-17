@@ -59,6 +59,14 @@ public class TradingConfig {
     // (which always use maxReversals directly, unbounded by this flag).
     private boolean reversalEnabled;
 
+    // NIFTY Breakout V2 only: points below the reference-candle high/low to wait for on
+    // retest before entering (the "215 = High(220) - 5" retest offset), and the extra run-up
+    // beyond the reference level before the whole session is abandoned as a runaway ("15 points").
+    @Builder.Default
+    private double breakoutPoints = 5.0;
+    @Builder.Default
+    private double maxChasePoints = 15.0;
+
     /**
      * Whether this config is a Bank Nifty strategy. Prefers the authoritative {@link #strategyKey}
      * (always reliably set by AlgoController from which card the user started) over sniffing the

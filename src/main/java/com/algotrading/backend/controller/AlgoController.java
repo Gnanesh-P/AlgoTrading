@@ -117,6 +117,8 @@ public class AlgoController {
                 .trailingProfit(req.getTrailingProfit())
                 .squareOffEod(req.isSquareOffEod())
                 .tradeMode(req.isPaperTrade() ? TradeMode.PAPER : TradeMode.LIVE)
+                .breakoutPoints(req.getBreakoutPoints() > 0 ? req.getBreakoutPoints() : 5.0)
+                .maxChasePoints(req.getMaxChasePoints() > 0 ? req.getMaxChasePoints() : 15.0)
                 .build();
 
         log.info("[{}][{}] Config: {} lot(s) = {} qty, mode={}, direction={}", startedBy, strategyKey, lots,

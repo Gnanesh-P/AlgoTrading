@@ -142,6 +142,20 @@ public class TradingEngineRegistry {
     }
 
     private TradingEngine buildEngine(PlatformUser user, StrategyKey strategyKey) {
+        if (strategyKey == StrategyKey.NIFTY_BREAKOUT_V2) {
+            return new BreakoutV2StrategyEngine(
+                    telegramService,
+                    user,
+                    strategyKey,
+                    kiteConnect,
+                    globalCache,
+                    optionInstrumentService,
+                    kiteInstrumentService,
+                    kiteTickerService,
+                    messagingTemplate,
+                    sessionPersistence,
+                    riskExitEvaluator);
+        }
         if (strategyKey == StrategyKey.NIFTY_BREAKOUT || strategyKey == StrategyKey.BANKNIFTY_BREAKOUT
                 || strategyKey == StrategyKey.SENSEX_BREAKOUT) {
             return new BreakoutStrategyEngine(

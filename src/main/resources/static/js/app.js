@@ -10,6 +10,7 @@ const STRATEGIES = [
   { key: 'BANKNIFTY_BREAKOUT', title: 'Bank Nifty Breakout',     subtitle: '5-Min Breakout · BANKNIFTY', icon: '💥', index: 'BANKNIFTY', breakout: true  },
   { key: 'SENSEX_SCALP',       title: 'Sensex Scalping',         subtitle: '1-Min Scalping · SENSEX',    icon: '🎯', index: 'SENSEX',     breakout: false },
   { key: 'SENSEX_BREAKOUT',    title: 'Sensex Breakout',         subtitle: '5-Min Breakout · SENSEX',    icon: '🌩️', index: 'SENSEX',     breakout: true  },
+  { key: 'NIFTY_BREAKOUT_V2',  title: 'NIFTY Breakout V2',       subtitle: 'Retest Breakout · NIFTY',    icon: '📐', index: 'NIFTY',     breakout: true, autoStrikeSelect: true },
 ];
 
 // Groups the sidebar nav into sections, one per underlying index.
@@ -530,10 +531,7 @@ function onFuturesChange(key) {
 
 async function saveConfig(key) {
   const strat       = STRATEGIES.find(s => s.key === key);
-  const ceSel       = document.getElementById('cfg-ce-strike-' + key);
-  const peSel       = document.getElementById('cfg-pe-strike-' + key);
   const futSel      = document.getElementById('cfg-futures-' + key);
-  const expiry      = document.getElementById('cfg-expiry-' + key).value;
   const direction   = document.getElementById('cfg-direction-' + key).value;
 
   const startTimeSel = document.getElementById('cfg-start-time-' + key);
@@ -547,18 +545,32 @@ async function saveConfig(key) {
   const futOpt = futSel.selectedOptions[0];
   const futureToken = futOpt ? parseInt(futOpt.dataset.token || 0) : 0;
 
-  // Manual strike selection only — Auto ATM has been removed.
-  const ceOpt = ceSel.selectedOptions[0];
-  const peOpt = peSel.selectedOptions[0];
-  const ceSymbol = ceSel.value;
-  const peSymbol = peSel.value;
-  const ceToken  = ceOpt ? parseInt(ceOpt.dataset.token || 0) : 0;
-  const peToken  = peOpt ? parseInt(peOpt.dataset.token || 0) : 0;
-  // data-strike carries the numeric strike (e.g. 21000) from the option-chain dropdown —
-  // needed so the backend can lock/report the selected strike (see lockedCeStrike/lockedPeStrike
-  // in AlgoStatusResponse, used by the breakout reference-candle High/Low display).
-  const ceStrikePrice = ceOpt ? parseInt(ceOpt.dataset.strike || 0) : 0;
-  const peStrikePrice = peOpt ? parseInt(peOpt.dataset.strike || 0) : 0;
+  // Manual strike selection only — Auto ATM has been removed. Strategies with
+  // autoStrikeSelect (e.g. NIFTY Breakout V2) pick their own CE/PE strikes server-side by
+  // premium scan, so there's no CE/PE dropdown UI for them — send blank/zero and let the
+  // backend resolve everything.
+  let ceSymbol = '', peSymbol = '', ceToken = 0, peToken = 0, ceStrikePrice = 0, peStrikePrice = 0;
+  let expiry = 'CURRENT_WEEK';
+  let breakoutPoints = 0, maxChasePoints = 0;
+  if (strat.autoStrikeSelect) {
+    breakoutPoints = parseFloat(document.getElementById('cfg-breakout-pts-' + key).value) || 5;
+    maxChasePoints = parseFloat(document.getElementById('cfg-max-chase-' + key).value) || 15;
+  } else {
+    const ceSel = document.getElementById('cfg-ce-strike-' + key);
+    const peSel = document.getElementById('cfg-pe-strike-' + key);
+    expiry = document.getElementById('cfg-expiry-' + key).value;
+    const ceOpt = ceSel.selectedOptions[0];
+    const peOpt = peSel.selectedOptions[0];
+    ceSymbol = ceSel.value;
+    peSymbol = peSel.value;
+    ceToken  = ceOpt ? parseInt(ceOpt.dataset.token || 0) : 0;
+    peToken  = peOpt ? parseInt(peOpt.dataset.token || 0) : 0;
+    // data-strike carries the numeric strike (e.g. 21000) from the option-chain dropdown —
+    // needed so the backend can lock/report the selected strike (see lockedCeStrike/lockedPeStrike
+    // in AlgoStatusResponse, used by the breakout reference-candle High/Low display).
+    ceStrikePrice = ceOpt ? parseInt(ceOpt.dataset.strike || 0) : 0;
+    peStrikePrice = peOpt ? parseInt(peOpt.dataset.strike || 0) : 0;
+  }
 
   const eodChecked = document.getElementById('cfg-eod-' + key).checked;
   const slEnabled  = document.getElementById('sl-enabled-' + key).checked;
@@ -596,6 +608,8 @@ async function saveConfig(key) {
     trailingProfit:  parseFloat(document.getElementById('cfg-trailing-' + key).value) || 0,
     squareOffEod:    eodChecked,
     paperTrade:      document.getElementById('cfg-trade-mode-' + key).value === 'PAPER',
+    breakoutPoints,
+    maxChasePoints,
   };
 
   showMsg('config-msg-' + key, '✅ Configuration ready. Click Start to begin.', 'success');
@@ -1511,7 +1525,24 @@ function buildCardHtml(s) {
   // shown to the user changes for Bank Nifty cards.
   const expiryOptCurrent = s.index === 'BANKNIFTY' ? 'Current Month' : 'Current Week';
   const expiryOptNext    = s.index === 'BANKNIFTY' ? 'Next Month'    : 'Next Week';
-  const strikeModeBlock = `
+  const strikeModeBlock = s.autoStrikeSelect ? `
+        <div class="form-row">
+          <div class="form-group" style="flex-direction:row;align-items:flex-start;gap:8px;">
+            <span style="font-size:12px;color:var(--text2);line-height:1.5;">
+              Strikes are auto-selected at start — first CE/PE strike (walking ITM from ATM) with live premium &gt; ₹200.
+            </span>
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Breakout Points</label>
+            <input type="number" id="cfg-breakout-pts-${k}" value="5" min="0" step="0.5"/>
+          </div>
+          <div class="form-group">
+            <label>Max Chase Points</label>
+            <input type="number" id="cfg-max-chase-${k}" value="15" min="0" step="0.5"/>
+          </div>
+        </div>` : `
         <div class="form-row">
           <div class="form-group">
             <label>Expiry</label>
