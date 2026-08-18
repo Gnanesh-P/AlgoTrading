@@ -8,6 +8,7 @@ import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
+import org.springframework.scheduling.TaskScheduler;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
@@ -32,6 +33,8 @@ public class TradingEngineRegistry {
     private final TelegramService         telegramService;
     private final KiteConnect kiteConnect;
     private final RiskExitEvaluator       riskExitEvaluator;
+    private final PremiumStrikeSelectionService premiumStrikeSelectionService;
+    private final TaskScheduler           taskScheduler;
 
     @PostConstruct
     public void recoverAllSessions() {
@@ -152,6 +155,8 @@ public class TradingEngineRegistry {
                     optionInstrumentService,
                     kiteInstrumentService,
                     kiteTickerService,
+                    premiumStrikeSelectionService,
+                    taskScheduler,
                     messagingTemplate,
                     sessionPersistence,
                     riskExitEvaluator);
@@ -180,6 +185,8 @@ public class TradingEngineRegistry {
                 optionInstrumentService,
                 kiteInstrumentService,
                 kiteTickerService,
+                premiumStrikeSelectionService,
+                taskScheduler,
                 messagingTemplate,
                 sessionPersistence,
                 riskExitEvaluator);

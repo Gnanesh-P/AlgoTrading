@@ -229,6 +229,9 @@ public class AlgoController {
                     try {
                         engine.updateParams(req.getTargetPrice(), req.getStopLoss(),
                                 req.isStopLossEnabled(), req.getTrailingProfit());
+                        if (req.getBreakoutPoints() > 0) {
+                            engine.updateBreakoutPoints(req.getBreakoutPoints());
+                        }
                         return ResponseEntity.ok("Parameters updated");
                     } catch (Exception e) {
                         return ResponseEntity.badRequest().body(e.getMessage());

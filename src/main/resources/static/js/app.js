@@ -4,13 +4,13 @@ let pricePoller  = null;
 let statusPoller = null;
 
 const STRATEGIES = [
-  { key: 'NIFTY_SCALP',        title: 'NIFTY Scalping',         subtitle: '1-Min Scalping · NIFTY',     icon: '⚡', index: 'NIFTY',     breakout: false },
-  { key: 'BANKNIFTY_SCALP',    title: 'Bank Nifty Scalping',     subtitle: '1-Min Scalping · BANKNIFTY', icon: '🏦', index: 'BANKNIFTY', breakout: false },
+  { key: 'NIFTY_SCALP',        title: 'NIFTY Scalping',         subtitle: '1-Min Scalping · NIFTY',     icon: '⚡', index: 'NIFTY',     breakout: false, strikeModeToggle: true },
+  { key: 'BANKNIFTY_SCALP',    title: 'Bank Nifty Scalping',     subtitle: '1-Min Scalping · BANKNIFTY', icon: '🏦', index: 'BANKNIFTY', breakout: false, strikeModeToggle: true },
   { key: 'NIFTY_BREAKOUT',     title: 'NIFTY Breakout',          subtitle: '5-Min Breakout · NIFTY',     icon: '🚀', index: 'NIFTY',     breakout: true  },
   { key: 'BANKNIFTY_BREAKOUT', title: 'Bank Nifty Breakout',     subtitle: '5-Min Breakout · BANKNIFTY', icon: '💥', index: 'BANKNIFTY', breakout: true  },
-  { key: 'SENSEX_SCALP',       title: 'Sensex Scalping',         subtitle: '1-Min Scalping · SENSEX',    icon: '🎯', index: 'SENSEX',     breakout: false },
+  { key: 'SENSEX_SCALP',       title: 'Sensex Scalping',         subtitle: '1-Min Scalping · SENSEX',    icon: '🎯', index: 'SENSEX',     breakout: false, strikeModeToggle: true },
   { key: 'SENSEX_BREAKOUT',    title: 'Sensex Breakout',         subtitle: '5-Min Breakout · SENSEX',    icon: '🌩️', index: 'SENSEX',     breakout: true  },
-  { key: 'NIFTY_BREAKOUT_V2',  title: 'NIFTY Breakout V2',       subtitle: 'Retest Breakout · NIFTY',    icon: '📐', index: 'NIFTY',     breakout: true, autoStrikeSelect: true },
+  { key: 'NIFTY_BREAKOUT_V2',  title: 'NIFTY Breakout V2',       subtitle: 'Retest Breakout · NIFTY',    icon: '📐', index: 'NIFTY',     breakout: true, autoStrikeSelect: true, hasLiveBreakoutPoints: true },
 ];
 
 // Groups the sidebar nav into sections, one per underlying index.
@@ -523,6 +523,14 @@ function toggleLiveSlEnabled(key) {
   slInput.style.opacity = enabled ? '1' : '0.5';
 }
 
+function onStrikeModeChange(key) {
+  const mode = document.getElementById('cfg-strike-mode-' + key).value;
+  const autoBlock   = document.getElementById('strike-mode-auto-' + key);
+  const manualBlock = document.getElementById('strike-mode-manual-' + key);
+  if (autoBlock)   autoBlock.classList.toggle('hidden', mode !== 'AUTO');
+  if (manualBlock) manualBlock.classList.toggle('hidden', mode !== 'MANUAL');
+}
+
 function onFuturesChange(key) {
   const sel = document.getElementById('cfg-futures-' + key);
   if (!sel) return;
@@ -545,17 +553,21 @@ async function saveConfig(key) {
   const futOpt = futSel.selectedOptions[0];
   const futureToken = futOpt ? parseInt(futOpt.dataset.token || 0) : 0;
 
-  // Manual strike selection only — Auto ATM has been removed. Strategies with
-  // autoStrikeSelect (e.g. NIFTY Breakout V2) pick their own CE/PE strikes server-side by
-  // premium scan, so there's no CE/PE dropdown UI for them — send blank/zero and let the
-  // backend resolve everything.
+  // Strategies with autoStrikeSelect (NIFTY Breakout V2) always pick their own CE/PE strikes
+  // server-side by premium scan. Strategies with strikeModeToggle (the scalping strategies) let
+  // the user choose Auto (same premium scan) or Manual (CE/PE dropdowns) at save time. Either way,
+  // when Auto applies there's no CE/PE dropdown UI — send blank/zero and let the backend resolve
+  // everything.
+  const strikeModeSel = strat.strikeModeToggle ? document.getElementById('cfg-strike-mode-' + key) : null;
+  const isAutoStrikeMode = strat.autoStrikeSelect || (strikeModeSel && strikeModeSel.value === 'AUTO');
+
   let ceSymbol = '', peSymbol = '', ceToken = 0, peToken = 0, ceStrikePrice = 0, peStrikePrice = 0;
   let expiry = 'CURRENT_WEEK';
   let breakoutPoints = 0, maxChasePoints = 0;
   if (strat.autoStrikeSelect) {
     breakoutPoints = parseFloat(document.getElementById('cfg-breakout-pts-' + key).value) || 5;
     maxChasePoints = parseFloat(document.getElementById('cfg-max-chase-' + key).value) || 15;
-  } else {
+  } else if (!isAutoStrikeMode) {
     const ceSel = document.getElementById('cfg-ce-strike-' + key);
     const peSel = document.getElementById('cfg-pe-strike-' + key);
     expiry = document.getElementById('cfg-expiry-' + key).value;
@@ -599,7 +611,7 @@ async function saveConfig(key) {
     peSymbol,  peToken,  peStrikePrice,
     expiryType:      expiry,
     entryStartTime:  startTimeSel.value,
-    strikeMode:      'MANUAL',
+    strikeMode:      isAutoStrikeMode ? 'AUTO' : 'MANUAL',
     lotQuantity:     lots,
     maxReversals,
     reversalEnabled,
@@ -728,6 +740,8 @@ async function updateLiveParams(key) {
   const stopLoss       = parseFloat(document.getElementById('live-sl-' + key).value) || 0;
   const slEnabled      = document.getElementById('live-sl-enabled-' + key).checked;
   const trailingProfit = parseFloat(document.getElementById('live-trailing-' + key).value) || 0;
+  const breakoutPtsEl  = document.getElementById('live-breakout-pts-' + key);
+  const breakoutPoints = breakoutPtsEl ? (parseFloat(breakoutPtsEl.value) || 0) : 0;
 
   if (isNaN(targetPrice) || targetPrice <= 0) {
     showMsg('live-params-msg-' + key, '❌ Enter a valid target', 'error');
@@ -735,7 +749,7 @@ async function updateLiveParams(key) {
   }
 
   try {
-    await post('/algo/update-params?strategy=' + key, { targetPrice, stopLoss, stopLossEnabled: slEnabled, trailingProfit });
+    await post('/algo/update-params?strategy=' + key, { targetPrice, stopLoss, stopLossEnabled: slEnabled, trailingProfit, breakoutPoints });
     showMsg('live-params-msg-' + key, '✅ Parameters updated', 'success');
     fetchAndRenderStatusAll();
   } catch (e) {
@@ -1518,31 +1532,22 @@ function buildSidebarHtml() {
 // ===== CARD TEMPLATE =====
 function buildCardHtml(s) {
   const k = s.key;
-  // Manual strike selection only — Auto ATM has been removed, so the strike-mode picker
-  // is gone entirely and the CE/PE strike dropdowns are always shown.
   // Bank Nifty now trades monthly contracts (NSE moved it off weekly expiry) — the dropdown
   // values stay CURRENT_WEEK/NEXT_WEEK (that's what the backend expects), only the label text
   // shown to the user changes for Bank Nifty cards.
   const expiryOptCurrent = s.index === 'BANKNIFTY' ? 'Current Month' : 'Current Week';
   const expiryOptNext    = s.index === 'BANKNIFTY' ? 'Next Month'    : 'Next Week';
-  const strikeModeBlock = s.autoStrikeSelect ? `
+
+  const autoNoteBlock = `
         <div class="form-row">
           <div class="form-group" style="flex-direction:row;align-items:flex-start;gap:8px;">
             <span style="font-size:12px;color:var(--text2);line-height:1.5;">
-              Strikes are auto-selected at start — first CE/PE strike (walking ITM from ATM) with live premium &gt; ₹200.
+              Strikes are auto-selected 1s before start time — first CE/PE strike (walking ITM from ATM) with live premium &gt; ₹200, current week expiry only.
             </span>
           </div>
-        </div>
-        <div class="form-row">
-          <div class="form-group">
-            <label>Breakout Points</label>
-            <input type="number" id="cfg-breakout-pts-${k}" value="5" min="0" step="0.5"/>
-          </div>
-          <div class="form-group">
-            <label>Max Chase Points</label>
-            <input type="number" id="cfg-max-chase-${k}" value="15" min="0" step="0.5"/>
-          </div>
-        </div>` : `
+        </div>`;
+
+  const manualFieldsBlock = `
         <div class="form-row">
           <div class="form-group">
             <label>Expiry</label>
@@ -1562,6 +1567,40 @@ function buildCardHtml(s) {
             <select id="cfg-pe-strike-${k}"><option>—</option></select>
           </div>
         </div>`;
+
+  // NIFTY Breakout V2: always auto strike-select, no toggle, plus its own breakout/chase inputs.
+  // Scalping strategies (strikeModeToggle): user picks Auto vs Manual; Auto reuses the same
+  // premium>200 selection as V2 (current week expiry, no CE/PE picking). Everything else
+  // (the 3 breakout strategies) stays Manual-only as before.
+  let strikeModeBlock;
+  if (s.autoStrikeSelect) {
+    strikeModeBlock = autoNoteBlock + `
+        <div class="form-row">
+          <div class="form-group">
+            <label>Breakout Points</label>
+            <input type="number" id="cfg-breakout-pts-${k}" value="5" min="0" step="0.5"/>
+          </div>
+          <div class="form-group">
+            <label>Max Chase Points</label>
+            <input type="number" id="cfg-max-chase-${k}" value="15" min="0" step="0.5"/>
+          </div>
+        </div>`;
+  } else if (s.strikeModeToggle) {
+    strikeModeBlock = `
+        <div class="form-row">
+          <div class="form-group">
+            <label>Strike Mode</label>
+            <select id="cfg-strike-mode-${k}" onchange="onStrikeModeChange('${k}')">
+              <option value="AUTO">Auto (premium &gt; ₹200)</option>
+              <option value="MANUAL">Manual</option>
+            </select>
+          </div>
+        </div>
+        <div id="strike-mode-auto-${k}">${autoNoteBlock}</div>
+        <div id="strike-mode-manual-${k}" class="hidden">${manualFieldsBlock}</div>`;
+  } else {
+    strikeModeBlock = manualFieldsBlock;
+  }
 
   const reversalRow = s.breakout ? `
         <div class="form-row">
@@ -1678,6 +1717,11 @@ function buildCardHtml(s) {
           <label>Trailing (₹)</label>
           <input type="number" id="live-trailing-${k}"/>
         </div>
+        ${s.hasLiveBreakoutPoints ? `
+        <div class="form-group">
+          <label>Breakout Points</label>
+          <input type="number" id="live-breakout-pts-${k}" min="0" step="0.5"/>
+        </div>` : ''}
         <button class="btn btn-sm btn-primary" onclick="updateLiveParams('${k}')">Update</button>
       </div>
       <div id="live-params-msg-${k}" class="msg-box hidden"></div>

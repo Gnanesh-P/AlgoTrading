@@ -7,6 +7,7 @@ import com.algotrading.backend.service.KiteErrorUtil;
 import com.algotrading.backend.service.KiteInstrumentService;
 import com.algotrading.backend.service.KiteTickerService;
 import com.algotrading.backend.service.OptionInstrumentService;
+import com.algotrading.backend.service.PremiumStrikeSelectionService;
 import com.algotrading.backend.service.RiskExitEvaluator;
 import com.algotrading.backend.service.SessionPersistenceService;
 import com.algotrading.backend.service.TelegramService;
@@ -19,38 +20,47 @@ import lombok.Getter;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
+import org.springframework.scheduling.TaskScheduler;
 
+import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.ZoneId;
+import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 import java.time.temporal.ChronoUnit;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ScheduledFuture;
 import java.util.stream.Collectors;
 
 /**
  * Strategy — NIFTY Breakout V2.
  *
- * Strikes are auto-selected once at session start: walking strikes ITM from ATM on both sides,
- * the first CE and first PE strike whose live premium is greater than {@value #MIN_PREMIUM} are
- * locked for the day (no MANUAL mode, no user-chosen strike). The first 5-min candle after the
- * configured start time (e.g. 09:20 → the 09:20-09:24:59 candle) becomes each leg's reference —
- * its High/Low are the breakout levels, reusing the same candle-bucketing machinery as the
- * original Breakout engine.
+ * Strikes are auto-selected 1 second before the configured start time (e.g. start=09:20 →
+ * selection runs at 09:19:59, so strikes are already locked "by 09:20:00"): walking strikes ITM
+ * from ATM on both sides, the first CE and first PE strike whose live premium is greater than
+ * {@value #MIN_PREMIUM} are locked for the day, current-week expiry only (see
+ * {@link com.algotrading.backend.service.PremiumStrikeSelectionService}; no MANUAL mode, no
+ * user-chosen strike). The first 5-min candle after the configured start time (e.g. 09:20 → the
+ * 09:20-09:24:59 candle) becomes each leg's reference — its High/Low are the breakout levels,
+ * reusing the same candle-bucketing machinery as the original Breakout engine.
  *
  * Entry is NOT immediate-on-breakout like the original engine. Once a leg's price crosses its
  * reference High ("breakout triggered"), the engine waits for a retest: the entry fires only when
  * price pulls back to (referenceHigh - breakoutPoints). If instead price runs up to
  * (referenceHigh + maxChasePoints) without ever retesting, the run is judged a runaway and the
- * whole session is stopped ("stop the algo").
+ * whole session is stopped ("stop the algo"). breakoutPoints is live-adjustable via
+ * {@link #updateBreakoutPoints(double)}; maxChasePoints is not.
  *
- * Reversal: while in a CE/PE position, if price falls back below that leg's reference Low, the
- * leg is exited and the points lost on that leg are carried forward as an addition to the OTHER
- * leg's abandon threshold (maxChasePoints + carriedLossPoints) — so a reversal chase is judged a
- * runaway sooner than a fresh initial entry would be. Bounded by the existing maxReversals/
- * reversalCount mechanism for consistency with every other strategy in this codebase.
+ * Reversal: while a position is open, the OPPOSITE leg is watched for its own reference-High
+ * break — that arms a reversal setup (same breakout-then-retest idea, entry = High -
+ * breakoutPoints). When it retests, the current position is exited and the new leg entered
+ * ("swap"); there's no separate abandon threshold for the reversal setup itself — the open
+ * position just keeps running under Target/SL/Trailing regardless of how far the opposite leg
+ * runs. Bounded by the existing maxReversals/reversalCount mechanism for consistency with every
+ * other strategy in this codebase.
  *
  * BUY-only (the spec never mentions writing/selling options) — order placement and P&L are
  * simplified accordingly versus the original Breakout engine's BUY/SELL branching.
@@ -62,8 +72,6 @@ public class BreakoutV2StrategyEngine implements TradingEngine {
     private static final int CANDLE_MINUTES = 5;
 
     private static final double MIN_PREMIUM = 200.0;
-    private static final int STRIKE_GAP = 50;
-    private static final int STRIKE_SCAN_STEPS = 20; // up to 1000 pts ITM each side of ATM
 
     @Getter
     private final String username;
@@ -85,21 +93,24 @@ public class BreakoutV2StrategyEngine implements TradingEngine {
     private final Map<Long, String> tokenToSymbol = new ConcurrentHashMap<>();
     private final Set<Long> subscribedTokens = ConcurrentHashMap.newKeySet();
 
-    // Per-leg "price has crossed reference high, now watching for retest" flag, and points lost
-    // on the leg most recently stopped-out via reversal — added to the NEXT leg's abandon
-    // threshold. Both are transient engine state (not persisted): on crash-recovery restart they
-    // reset to their defaults, meaning a leg mid-retest-wait must cross its reference high again
-    // before entry re-arms — a conservative, safe default rather than an aggressive one.
+    // Per-leg "price has crossed reference high" flag — used both for the initial entry (waiting
+    // for retest) and, once a position is open, to mark the OPPOSITE leg's reversal setup as
+    // armed. Transient engine state (not persisted): on crash-recovery restart it resets, meaning
+    // a leg must cross its reference high again before its setup re-arms — a conservative, safe
+    // default rather than an aggressive one.
     private final Map<String, Boolean> breakoutTriggered = new ConcurrentHashMap<>();
-    private volatile double carriedLossPoints = 0;
 
     private final MarketDataCache globalCache;
     private final OptionInstrumentService optionInstrumentService;
     private final KiteInstrumentService kiteInstrumentService;
     private final KiteTickerService kiteTickerService;
+    private final PremiumStrikeSelectionService premiumStrikeSelectionService;
+    private final TaskScheduler taskScheduler;
     private final SimpMessagingTemplate messagingTemplate;
     private final SessionPersistenceService sessionPersistence;
     private final RiskExitEvaluator riskExitEvaluator;
+
+    private volatile ScheduledFuture<?> strikeSelectionTask;
 
     public BreakoutV2StrategyEngine(TelegramService telegramService,
                                      PlatformUser platformUser,
@@ -109,6 +120,8 @@ public class BreakoutV2StrategyEngine implements TradingEngine {
                                      OptionInstrumentService optionInstrumentService,
                                      KiteInstrumentService kiteInstrumentService,
                                      KiteTickerService kiteTickerService,
+                                     PremiumStrikeSelectionService premiumStrikeSelectionService,
+                                     TaskScheduler taskScheduler,
                                      SimpMessagingTemplate messagingTemplate,
                                      SessionPersistenceService sessionPersistence,
                                      RiskExitEvaluator riskExitEvaluator) {
@@ -121,6 +134,8 @@ public class BreakoutV2StrategyEngine implements TradingEngine {
         this.optionInstrumentService = optionInstrumentService;
         this.kiteInstrumentService = kiteInstrumentService;
         this.kiteTickerService = kiteTickerService;
+        this.premiumStrikeSelectionService = premiumStrikeSelectionService;
+        this.taskScheduler = taskScheduler;
         this.messagingTemplate = messagingTemplate;
         this.sessionPersistence = sessionPersistence;
         this.riskExitEvaluator = riskExitEvaluator;
@@ -158,8 +173,8 @@ public class BreakoutV2StrategyEngine implements TradingEngine {
     }
 
     /**
-     * Breakout + limit-retest + runaway-abandon state machine. Runs on every tick once a leg's
-     * reference candle (its 1st 5-min candle) has closed.
+     * Breakout + limit-retest + runaway-abandon state machine for the initial entry, and the
+     * opposite-leg-High-break reversal watch once a position is open.
      */
     private synchronized void checkBreakoutOnTick(String instrument, double price) {
         if (session == null || session.getState() == StrategyState.STOPPED
@@ -178,28 +193,21 @@ public class BreakoutV2StrategyEngine implements TradingEngine {
 
         if (session.getState() == StrategyState.IN_POSITION) {
             TradeEntry openLeg = session.getCurrentOpenLeg();
-            if (openLeg != null && openLeg.getOptionType() == leg && price < ref.getLow()) {
-                handleLowBreachExit(leg, ref, price);
-            }
+            if (openLeg == null || openLeg.getOptionType() == leg) return; // no low-watch on the open leg anymore
+            // This tick is for the leg OPPOSITE the current position — watch it for a reversal setup.
+            evaluateReversalSetup(leg, ref, price, openLeg);
             return;
         }
 
         if (session.getState() != StrategyState.WAITING_FOR_CANDLES) return;
-
-        // A leg that has already been traded once this session only re-enters via the explicit
-        // reversal path in handleLowBreachExit — not via this generic per-tick evaluation.
-        boolean alreadyTradedThisLeg = session.getTradeLegs().stream()
-                .anyMatch(t -> t.getOptionType() == leg);
-        if (alreadyTradedThisLeg) return;
-
         evaluateEntryForLeg(leg, ref, price, "INITIAL");
     }
 
     /**
-     * Applies the breakout-then-retest-then-abandon rule for a single leg. Example from spec:
-     * reference high=220, breakoutPoints=5 → once price first exceeds 220, entry fires when price
-     * retraces to 215; if price instead runs up to 220+15=235 without ever retesting 215, the
-     * session is stopped as a runaway.
+     * Applies the breakout-then-retest-then-abandon rule for the initial (pre-position) entry.
+     * Example from spec: reference high=220, breakoutPoints=5 → once price first exceeds 220,
+     * entry fires when price retraces to 215; if price instead runs up to 220+15=235 without ever
+     * retesting 215, the session is stopped as a runaway.
      */
     private void evaluateEntryForLeg(OptionType leg, Candle ref, double price, String reasonPrefix) {
         TradingConfig cfg = session.getConfig();
@@ -214,7 +222,7 @@ public class BreakoutV2StrategyEngine implements TradingEngine {
         }
 
         double entryTarget = ref.getHigh() - cfg.getBreakoutPoints();
-        double abandonLevel = ref.getHigh() + cfg.getMaxChasePoints() + carriedLossPoints;
+        double abandonLevel = ref.getHigh() + cfg.getMaxChasePoints();
 
         if (price <= entryTarget) {
             enterBreakoutV2(leg, entryTarget, reasonPrefix);
@@ -231,41 +239,46 @@ public class BreakoutV2StrategyEngine implements TradingEngine {
     }
 
     /**
-     * A leg breaches its reference Low while open: exit it, carry the points lost forward onto
-     * the other leg's abandon threshold, and — if reversals remain available — start watching the
-     * other leg for its own breakout/retest entry (immediately, if it's already broken out).
+     * While IN_POSITION on one leg, watches the OPPOSITE leg for its own reference-High break —
+     * that arms a "reversal setup" (same breakout-then-retest idea as the initial entry, entry =
+     * High - breakoutPoints). The setup has no abandon/runaway threshold of its own — the current
+     * position keeps running under Target/SL/Trailing regardless of how far the opposite leg runs.
      */
-    private void handleLowBreachExit(OptionType leg, Candle ref, double price) {
-        log.info("[{}][BREAKOUT_V2] {} broke below reference low={} @ price={} — exiting",
-                username, leg, ref.getLow(), price);
-        exitCurrentPosition("LOW_BREACH");
-
-        TradeEntry justClosed = session.getTradeLegs().get(session.getTradeLegs().size() - 1);
-        double lostPoints = Math.max(0, justClosed.getEntryPrice() - justClosed.getExitPrice());
-        carriedLossPoints += lostPoints;
-
+    private void evaluateReversalSetup(OptionType leg, Candle ref, double price, TradeEntry openLeg) {
         TradingConfig cfg = session.getConfig();
-        boolean reversalAllowed = cfg.getMaxReversals() < 0 || session.getReversalCount() < cfg.getMaxReversals();
-        if (!reversalAllowed) {
-            internalStopSession("Max reversals reached after " + leg + " low-breach exit");
-            persistAndBroadcast();
+        boolean armed = Boolean.TRUE.equals(breakoutTriggered.get(leg.name()));
+        if (!armed) {
+            if (price > ref.getHigh()) {
+                breakoutTriggered.put(leg.name(), true);
+                log.info("[{}][BREAKOUT_V2] {} High broken while {} is open — reversal setup armed, entry={}",
+                        username, leg, openLeg.getOptionType(), ref.getHigh() - cfg.getBreakoutPoints());
+            }
             return;
         }
 
-        OptionType otherLeg = leg == OptionType.CE ? OptionType.PE : OptionType.CE;
-        Candle otherRef = session.getLegReferenceCandles().get(otherLeg.name());
-        session.setReversalCount(session.getReversalCount() + 1);
-        session.setState(StrategyState.WAITING_FOR_CANDLES);
-
-        if (otherRef != null) {
-            String otherInstrument = otherLeg == OptionType.CE
-                    ? session.getLockedCeInstrument() : session.getLockedPeInstrument();
-            Double otherPrice = priceCache.get(otherInstrument);
-            if (otherPrice != null && otherPrice > otherRef.getHigh()) {
-                breakoutTriggered.put(otherLeg.name(), true);
-                evaluateEntryForLeg(otherLeg, otherRef, otherPrice, "REVERSAL_" + session.getReversalCount());
-            }
+        double entryTarget = ref.getHigh() - cfg.getBreakoutPoints();
+        if (price <= entryTarget) {
+            executeReversal(leg, openLeg, entryTarget);
         }
+    }
+
+    /** Swaps the currently open leg for the reversal-setup leg that just retested its entry. */
+    private void executeReversal(OptionType newLeg, TradeEntry openLeg, double entryTargetPrice) {
+        TradingConfig cfg = session.getConfig();
+        boolean reversalAllowed = cfg.getMaxReversals() < 0 || session.getReversalCount() < cfg.getMaxReversals();
+        if (!reversalAllowed) {
+            log.info("[{}][BREAKOUT_V2] Max reversals reached — ignoring {} reversal setup", username, newLeg);
+            return;
+        }
+
+        log.info("[{}][BREAKOUT_V2] Reversal: {} → {} @ {}", username, openLeg.getOptionType(), newLeg, entryTargetPrice);
+        exitCurrentPosition("REVERSAL");
+        session.setReversalCount(session.getReversalCount() + 1);
+        // All other pending reversal setups are implicitly cancelled: only one opposite leg ever
+        // exists relative to whichever leg is open, so swapping the open leg is itself the
+        // cancellation — evaluateReversalSetup will now watch the leg just exited instead.
+        enterBreakoutV2(newLeg, entryTargetPrice, "REVERSAL_" + session.getReversalCount());
+        checkExitConditions();
         persistAndBroadcast();
     }
 
@@ -334,7 +347,6 @@ public class BreakoutV2StrategyEngine implements TradingEngine {
         formingCandles.clear();
         legCandleCount.clear();
         breakoutTriggered.clear();
-        carriedLossPoints = 0;
         config.setStrategyKey(strategyKey);
         config.setTradeDirection(TradeDirection.BUY); // V2 is buy-only
 
@@ -357,13 +369,53 @@ public class BreakoutV2StrategyEngine implements TradingEngine {
             subscribedTokens.addAll(instruments.keySet());
         }
 
+        sessionPersistence.saveForUser(EngineKeys.of(username, strategyKey), session);
+        scheduleStrikeSelection(session.getSessionId(), session.getTradeDate(), config.getStartCandleTime());
+
+        log.info("[{}][BREAKOUT_V2] Session {} started (mode={}) — strike selection scheduled for {} (1s before start time)",
+                username, session.getSessionId(), config.getTradeMode(), config.getStartCandleTime());
+        return session;
+    }
+
+    /**
+     * Schedules the premium strike scan for 1 second before the configured start time (e.g.
+     * start=09:20 → selection runs at 09:19:59, so "by 09:20:00" the strikes are already locked
+     * and subscribed). If that instant has already passed (user started the algo late), the scan
+     * runs immediately instead of waiting.
+     */
+    private void scheduleStrikeSelection(String forSessionId, LocalDate tradeDate, LocalTime startTime) {
+        if (strikeSelectionTask != null) {
+            strikeSelectionTask.cancel(false);
+        }
+        Instant target = startTime != null
+                ? ZonedDateTime.of(tradeDate, startTime, ZoneId.of("Asia/Kolkata")).minusSeconds(1).toInstant()
+                : Instant.now();
+
+        if (!target.isAfter(Instant.now())) {
+            doSelectStrikesAndNotify(forSessionId);
+        } else {
+            log.info("[{}][BREAKOUT_V2] Strike selection scheduled at {}", username, target);
+            strikeSelectionTask = taskScheduler.schedule(() -> doSelectStrikesAndNotify(forSessionId), target);
+        }
+    }
+
+    /**
+     * Runs the premium scan-and-lock and sends the "Started" Telegram alert once CE/PE are known.
+     * Guarded by session id so a scheduled task from a superseded session (stopped and restarted
+     * before its original scheduled time fired) never mutates the wrong session.
+     */
+    private synchronized void doSelectStrikesAndNotify(String forSessionId) {
+        if (session == null || !forSessionId.equals(session.getSessionId())) return;
+        if (session.getState() != StrategyState.WAITING_FOR_CANDLES) return;
+
         if (!selectStrikesByPremium()) {
-            sessionPersistence.saveForUser(EngineKeys.of(username, strategyKey), session);
-            return session;
+            return; // selectStrikesByPremium() already called internalStopSession() with the reason
         }
 
         sessionPersistence.saveForUser(EngineKeys.of(username, strategyKey), session);
+        broadcastUpdate();
 
+        TradingConfig config = session.getConfig();
         String startMsg = String.format(
                 "🚀 <b>NIFTY Breakout V2 Started</b>\nUser: <code>%s</code>\nTrade Mode: <code>%s</code>\n" +
                         "CE: <code>%s</code>  PE: <code>%s</code>\nBreakout pts: <code>%.1f</code>  Max chase: <code>%.1f</code>\n" +
@@ -375,17 +427,14 @@ public class BreakoutV2StrategyEngine implements TradingEngine {
                 config.getTargetProfit(),
                 config.getTrailingProfit() > 0 ? String.format("%.2f", config.getTrailingProfit()) : "OFF");
         sendTelegram(startMsg);
-
-        log.info("[{}][BREAKOUT_V2] Session {} started (mode={})", username, session.getSessionId(), config.getTradeMode());
-        return session;
     }
 
     /**
-     * Auto-selects CE/PE strikes for the day: walks strikes ITM from ATM on both sides in
-     * {@value #STRIKE_GAP}-pt steps, batch-fetches live premiums, and locks the FIRST strike per
-     * side whose premium is greater than {@value #MIN_PREMIUM}. Requires a live Kite connection
-     * (both for the spot reference price and the batch quote call) — there's no historical/paper
-     * substitute for real premium data.
+     * Auto-selects CE/PE strikes for the day via {@link PremiumStrikeSelectionService} — current
+     * week expiry only, first strike per side (walking ITM from ATM) with live premium greater
+     * than {@value #MIN_PREMIUM}. Requires a live Kite connection (both for the spot reference
+     * price and the batch quote call) — there's no historical/paper substitute for real premium
+     * data.
      */
     private boolean selectStrikesByPremium() {
         String futuresInstrument = session.getConfig().getFuturesInstrument();
@@ -397,75 +446,36 @@ public class BreakoutV2StrategyEngine implements TradingEngine {
             return false;
         }
 
-        LocalDate expiry = optionInstrumentService.getAutoExpiryDate();
-        int atm = optionInstrumentService.computeAtmStrike(spot, STRIKE_GAP);
-
-        LinkedHashMap<Integer, KiteInstrument> ceCandidates = new LinkedHashMap<>();
-        LinkedHashMap<Integer, KiteInstrument> peCandidates = new LinkedHashMap<>();
-        for (int i = 0; i <= STRIKE_SCAN_STEPS; i++) {
-            int ceStrike = atm - i * STRIKE_GAP; // walk ITM for CE (lower strikes = higher premium)
-            int peStrike = atm + i * STRIKE_GAP; // walk ITM for PE (higher strikes = higher premium)
-            kiteInstrumentService.findOption("NIFTY", expiry, ceStrike, "CE").ifPresent(inst -> ceCandidates.put(ceStrike, inst));
-            kiteInstrumentService.findOption("NIFTY", expiry, peStrike, "PE").ifPresent(inst -> peCandidates.put(peStrike, inst));
-        }
-
-        if (ceCandidates.isEmpty() || peCandidates.isEmpty()) {
-            internalStopSession("Could not resolve CE/PE strikes near ATM " + atm + " for expiry " + expiry
+        Optional<PremiumStrikeSelectionService.Selection> selection =
+                premiumStrikeSelectionService.selectByPremium(session.getConfig(), spot, MIN_PREMIUM);
+        if (selection.isEmpty()) {
+            internalStopSession("No CE/PE strike with premium > " + MIN_PREMIUM + " found near spot " + spot
                     + " — instrument cache may not be loaded (connect Kite first)");
             return false;
         }
 
-        List<String> quoteKeys = new ArrayList<>();
-        ceCandidates.values().forEach(inst -> quoteKeys.add("NFO:" + inst.getTradingsymbol()));
-        peCandidates.values().forEach(inst -> quoteKeys.add("NFO:" + inst.getTradingsymbol()));
-
-        Map<String, Quote> quotes;
-        try {
-            quotes = kiteConnect.getQuote(quoteKeys.toArray(new String[0]));
-        } catch (Exception | KiteException e) {
-            internalStopSession("Failed to fetch option premiums for strike selection: " + e.getMessage());
-            return false;
-        }
-
-        Map.Entry<Integer, KiteInstrument> ce = pickFirstAbovePremium(ceCandidates, quotes);
-        Map.Entry<Integer, KiteInstrument> pe = pickFirstAbovePremium(peCandidates, quotes);
-
-        if (ce == null || pe == null) {
-            internalStopSession("No CE/PE strike with premium > " + MIN_PREMIUM
-                    + " found within " + STRIKE_SCAN_STEPS + " strikes of ATM " + atm);
-            return false;
-        }
-
-        session.setLockedCeStrike(ce.getKey());
-        session.setLockedPeStrike(pe.getKey());
-        session.setLockedCeInstrument(ce.getValue().getTradingsymbol());
-        session.setLockedPeInstrument(pe.getValue().getTradingsymbol());
-        session.setLockedExpiry(expiry);
-        session.setLockedExpiryLabel("Weekly (" + expiry.format(DateTimeFormatter.ofPattern("dd MMM", Locale.ENGLISH)) + ")");
+        PremiumStrikeSelectionService.Selection s = selection.get();
+        session.setLockedCeStrike(s.ceStrike());
+        session.setLockedPeStrike(s.peStrike());
+        session.setLockedCeInstrument(s.ce().getTradingsymbol());
+        session.setLockedPeInstrument(s.pe().getTradingsymbol());
+        session.setLockedExpiry(s.expiry());
+        session.setLockedExpiryLabel("Current Week (" + s.expiry().format(DateTimeFormatter.ofPattern("dd MMM", Locale.ENGLISH)) + ")");
 
         Map<Long, String> toSub = new HashMap<>();
-        toSub.put(ce.getValue().getInstrumentToken(), ce.getValue().getTradingsymbol());
-        toSub.put(pe.getValue().getInstrumentToken(), pe.getValue().getTradingsymbol());
+        toSub.put(s.ce().getInstrumentToken(), s.ce().getTradingsymbol());
+        toSub.put(s.pe().getInstrumentToken(), s.pe().getTradingsymbol());
         subscribeInstruments(toSub);
         kiteTickerService.subscribe(toSub);
-
-        log.info("[{}][BREAKOUT_V2] Strike selection: spot={} atm={} → CE {}@{} PE {}@{} (premium>{})",
-                username, spot, atm, ce.getKey(), ce.getValue().getTradingsymbol(),
-                pe.getKey(), pe.getValue().getTradingsymbol(), MIN_PREMIUM);
         return true;
-    }
-
-    private Map.Entry<Integer, KiteInstrument> pickFirstAbovePremium(Map<Integer, KiteInstrument> candidates,
-                                                                       Map<String, Quote> quotes) {
-        for (Map.Entry<Integer, KiteInstrument> e : candidates.entrySet()) {
-            Quote q = quotes.get("NFO:" + e.getValue().getTradingsymbol());
-            if (q != null && q.lastPrice > MIN_PREMIUM) return e;
-        }
-        return null;
     }
 
     public synchronized TradeSession stopSession() {
         if (session == null) throw new IllegalStateException("No active session for user: " + username);
+        if (strikeSelectionTask != null) {
+            strikeSelectionTask.cancel(false);
+            strikeSelectionTask = null;
+        }
         if (session.getState() == StrategyState.IN_POSITION) {
             exitCurrentPosition("MANUAL_STOP");
         }
@@ -486,7 +496,21 @@ public class BreakoutV2StrategyEngine implements TradingEngine {
                     .ifPresent(i -> tokenToSymbol.put(i.getInstrumentToken(), i.getTradingsymbol()));
         }
         subscribedTokens.addAll(tokenToSymbol.keySet());
+        // If the crash happened before the scheduled strike scan fired, re-schedule it — since a
+        // restart implies real elapsed downtime, the target instant has almost certainly already
+        // passed, so this effectively runs immediately (see scheduleStrikeSelection()).
+        if (restored.getState() == StrategyState.WAITING_FOR_CANDLES && restored.getLockedCeInstrument() == null
+                && restored.getConfig() != null) {
+            scheduleStrikeSelection(restored.getSessionId(), restored.getTradeDate(), restored.getConfig().getStartCandleTime());
+        }
         log.info("[{}][BREAKOUT_V2] Session {} restored (state={})", username, restored.getSessionId(), restored.getState());
+    }
+
+    @Override
+    public synchronized void updateBreakoutPoints(double breakoutPoints) {
+        if (session == null) throw new IllegalStateException("No active session");
+        session.getConfig().setBreakoutPoints(breakoutPoints);
+        log.info("[{}][BREAKOUT_V2] Breakout points updated live: {}", username, breakoutPoints);
     }
 
     public synchronized void squareOffEod() {

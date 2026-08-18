@@ -21,6 +21,11 @@ public interface TradingEngine {
     void subscribeInstruments(Map<Long, String> instruments);
     void restoreSession(TradeSession restored);
     void updateParams(double targetPrice, double stopLoss, boolean stopLossEnabled, double trailingProfit);
+
+    /** Live-adjustable breakout retest offset. No-op for engines that don't support it (only NIFTY_BREAKOUT_V2 does). */
+    default void updateBreakoutPoints(double breakoutPoints) {
+    }
+
     void updateKiteAccessToken(String newToken);
     TradeSession getSession();
     AlgoStatusResponse buildStatusResponse();

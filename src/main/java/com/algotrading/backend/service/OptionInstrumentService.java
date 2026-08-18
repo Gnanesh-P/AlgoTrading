@@ -56,6 +56,17 @@ public class OptionInstrumentService {
         return config.isSensex() ? DayOfWeek.THURSDAY : DayOfWeek.TUESDAY;
     }
 
+    /**
+     * Current week's expiry only — no auto-roll to next week even when expiry is imminent (unlike
+     * {@link #getAutoExpiryDate()}, which the OI signal service uses). Used by premium-based
+     * strike auto-selection (V1 Auto mode, NIFTY Breakout V2), which is only ever meant to trade
+     * the current week's contract regardless of how close it is to expiring.
+     */
+    public LocalDate currentWeekExpiry(TradingConfig config) {
+        LocalDate today = LocalDate.now(ZoneId.of("Asia/Kolkata"));
+        return findWeeklyExpiry(today, expiryWeekdayFor(config));
+    }
+
     private static final Set<LocalDate> NSE_HOLIDAYS = Set.of(
         LocalDate.of(2026, 1, 26),
         LocalDate.of(2026, 2, 19),
