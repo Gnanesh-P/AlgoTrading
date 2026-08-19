@@ -172,6 +172,8 @@ public class TradingEngineRegistry {
                     optionInstrumentService,
                     kiteInstrumentService,
                     kiteTickerService,
+                    premiumStrikeSelectionService,
+                    taskScheduler,
                     messagingTemplate,
                     sessionPersistence,
                     riskExitEvaluator);

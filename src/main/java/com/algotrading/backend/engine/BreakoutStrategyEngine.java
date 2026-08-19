@@ -7,6 +7,7 @@ import com.algotrading.backend.service.KiteErrorUtil;
 import com.algotrading.backend.service.KiteInstrumentService;
 import com.algotrading.backend.service.KiteTickerService;
 import com.algotrading.backend.service.OptionInstrumentService;
+import com.algotrading.backend.service.PremiumStrikeSelectionService;
 import com.algotrading.backend.service.RiskExitEvaluator;
 import com.algotrading.backend.service.SessionPersistenceService;
 import com.algotrading.backend.service.TelegramService;
@@ -19,15 +20,19 @@ import lombok.Getter;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
+import org.springframework.scheduling.TaskScheduler;
 
+import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.ZoneId;
+import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 import java.time.temporal.ChronoUnit;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ScheduledFuture;
 import java.util.stream.Collectors;
 
 /**
@@ -76,9 +81,14 @@ public class BreakoutStrategyEngine implements TradingEngine {
     private final OptionInstrumentService optionInstrumentService;
     private final KiteInstrumentService kiteInstrumentService;
     private final KiteTickerService kiteTickerService;
+    private final PremiumStrikeSelectionService premiumStrikeSelectionService;
+    private final TaskScheduler taskScheduler;
     private final SimpMessagingTemplate messagingTemplate;
     private final SessionPersistenceService sessionPersistence;
     private final RiskExitEvaluator riskExitEvaluator;
+
+    private static final double AUTO_MIN_PREMIUM = 200.0;
+    private volatile ScheduledFuture<?> strikeSelectionTask;
 
     public BreakoutStrategyEngine(TelegramService telegramService,
                                    PlatformUser platformUser,
@@ -88,6 +98,8 @@ public class BreakoutStrategyEngine implements TradingEngine {
                                    OptionInstrumentService optionInstrumentService,
                                    KiteInstrumentService kiteInstrumentService,
                                    KiteTickerService kiteTickerService,
+                                   PremiumStrikeSelectionService premiumStrikeSelectionService,
+                                   TaskScheduler taskScheduler,
                                    SimpMessagingTemplate messagingTemplate,
                                    SessionPersistenceService sessionPersistence,
                                    RiskExitEvaluator riskExitEvaluator) {
@@ -100,6 +112,8 @@ public class BreakoutStrategyEngine implements TradingEngine {
         this.optionInstrumentService = optionInstrumentService;
         this.kiteInstrumentService = kiteInstrumentService;
         this.kiteTickerService = kiteTickerService;
+        this.premiumStrikeSelectionService = premiumStrikeSelectionService;
+        this.taskScheduler = taskScheduler;
         this.messagingTemplate = messagingTemplate;
         this.sessionPersistence = sessionPersistence;
         this.riskExitEvaluator = riskExitEvaluator;
@@ -283,33 +297,21 @@ public class BreakoutStrategyEngine implements TradingEngine {
             subscribedTokens.addAll(instruments.keySet());
         }
 
-        // AUTO_ATM: strike computed from reference (futures/index) price, real tradingsymbol
-        //           resolved from Kite cache by (expiry, strike, type) lookup — see
-        //           lockAndSubscribeAtmOptions(). A reference price is required only in this mode.
-        // MANUAL:   CE/PE tradingsymbols already chosen by the user (via option chain dropdown)
-        //           and passed in `config`/`instruments` — resolveAndLockInstruments() locks them
-        //           directly (no reference price needed), and AlgoController has already
-        //           subscribed their tokens on the ticker.
-        double refPrice = 0;
-        if (config.getStrikeMode() == StrikeMode.AUTO_ATM) {
-            refPrice = getLtp(config.getFuturesInstrument());
-            if (refPrice <= 0) refPrice = globalCache.getLastPrice(config.getFuturesInstrument());
-            if (refPrice <= 0) {
-                internalStopSession("No reference price for " + config.getFuturesInstrument()
-                        + " — ensure Kite ticker is subscribed and connected before starting the breakout strategy");
-                String key = EngineKeys.of(username, strategyKey);
-                sessionPersistence.saveForUser(key, session);
-                return session;
-            }
-        }
-
-        optionInstrumentService.resolveAndLockInstruments(config, session, refPrice);
-        if (config.getStrikeMode() == StrikeMode.AUTO_ATM) {
-            lockAndSubscribeAtmOptions();
+        // AUTO mode: strikes chosen by live premium (>200), scheduled to run 1s before the
+        //            configured start time — see scheduleStrikeSelection()/doSelectStrikesAndLock().
+        // MANUAL:    CE/PE tradingsymbols already chosen by the user (via option chain dropdown)
+        //            and passed in `config`/`instruments` — resolveAndLockInstruments() locks them
+        //            directly, and AlgoController has already subscribed their tokens on the ticker.
+        if (config.getStrikeMode() == StrikeMode.MANUAL) {
+            optionInstrumentService.resolveAndLockInstruments(config, session, 0);
         }
 
         String persistenceKey = EngineKeys.of(username, strategyKey);
         sessionPersistence.saveForUser(persistenceKey, session);
+
+        if (config.getStrikeMode() == StrikeMode.AUTO_ATM) {
+            scheduleStrikeSelection(session.getSessionId(), session.getTradeDate(), config.getStartCandleTime());
+        }
 
         String startMsg = String.format(
                 "🚀 <b>Breakout Strategy Started</b>\nUser: <code>%s</code>\nDirection: <code>%s</code>\n" +
@@ -331,52 +333,83 @@ public class BreakoutStrategyEngine implements TradingEngine {
     }
 
     /**
-     * NIFTY vs BANKNIFTY vs SENSEX index prefix for Kite instrument lookups — mirrors
-     * ScalpingStrategyEngine's indexPrefix(), driven by the authoritative strategyKey
-     * (via config.isBankNifty()/isSensex()) rather than sniffing symbol text.
+     * Schedules the premium strike scan for 1 second before the configured start time (e.g.
+     * start=09:20 → selection runs at 09:19:59, so "by 09:20:00" the strikes are already locked
+     * and subscribed, ready before the reference candle window even starts). If that instant has
+     * already passed (user started the algo late), the scan runs immediately instead of waiting.
      */
-    private String indexPrefix() {
-        TradingConfig cfg = session.getConfig();
-        if (cfg.isSensex()) return "SENSEX";
-        return cfg.isBankNifty() ? "BANKNIFTY" : "NIFTY";
+    private void scheduleStrikeSelection(String forSessionId, LocalDate tradeDate, LocalTime startTime) {
+        if (strikeSelectionTask != null) {
+            strikeSelectionTask.cancel(false);
+        }
+        Instant target = startTime != null
+                ? ZonedDateTime.of(tradeDate, startTime, ZoneId.of("Asia/Kolkata")).minusSeconds(1).toInstant()
+                : Instant.now();
+
+        if (!target.isAfter(Instant.now())) {
+            doSelectStrikesAndLock(forSessionId);
+        } else {
+            log.info("[{}][BREAKOUT] Auto strike selection scheduled at {}", username, target);
+            strikeSelectionTask = taskScheduler.schedule(() -> doSelectStrikesAndLock(forSessionId), target);
+        }
     }
 
-    private void lockAndSubscribeAtmOptions() {
-        LocalDate expiry = session.getLockedExpiry();
-        int ceStrike = session.getLockedCeStrike();
-        int peStrike = session.getLockedPeStrike();
-        String index = indexPrefix();
+    /**
+     * Runs the premium scan-and-lock for AUTO mode. Guarded by session id so a scheduled task
+     * from a superseded session (stopped and restarted before its original scheduled time fired)
+     * never mutates the wrong session.
+     */
+    private synchronized void doSelectStrikesAndLock(String forSessionId) {
+        if (session == null || !forSessionId.equals(session.getSessionId())) return;
+        if (session.getState() == StrategyState.STOPPED || session.getState() == StrategyState.IDLE) return;
 
-        if (expiry == null) {
-            log.error("[{}][BREAKOUT] lockedExpiry is null — cannot subscribe options", username);
+        TradingConfig cfg = session.getConfig();
+        double spot = getLtp(cfg.getFuturesInstrument());
+        if (spot <= 0) spot = globalCache.getLastPrice(cfg.getFuturesInstrument());
+        if (spot <= 0) {
+            internalStopSession("No reference price for " + cfg.getFuturesInstrument()
+                    + " — ensure Kite ticker is subscribed and connected before starting (Auto strike mode)");
+            sessionPersistence.saveForUser(EngineKeys.of(username, strategyKey), session);
+            broadcastUpdate();
             return;
         }
 
-        Map<Long, String> toSub = new HashMap<>();
-        kiteInstrumentService.findOption(index, expiry, ceStrike, "CE").ifPresentOrElse(i -> {
-            toSub.put(i.getInstrumentToken(), i.getTradingsymbol());
-            session.setLockedCeInstrument(i.getTradingsymbol());
-            log.info("[{}][BREAKOUT] CE: {} token={}", username, i.getTradingsymbol(), i.getInstrumentToken());
-        }, () -> log.warn("[{}][BREAKOUT] CE not in cache: expiry={} strike={}", username, expiry, ceStrike));
-
-        kiteInstrumentService.findOption(index, expiry, peStrike, "PE").ifPresentOrElse(i -> {
-            toSub.put(i.getInstrumentToken(), i.getTradingsymbol());
-            session.setLockedPeInstrument(i.getTradingsymbol());
-            log.info("[{}][BREAKOUT] PE: {} token={}", username, i.getTradingsymbol(), i.getInstrumentToken());
-        }, () -> log.warn("[{}][BREAKOUT] PE not in cache: expiry={} strike={}", username, expiry, peStrike));
-
-        if (!toSub.isEmpty()) {
-            subscribeInstruments(toSub);
-            kiteTickerService.subscribe(toSub);
-            log.info("[{}][BREAKOUT] subscribed {} instruments", username, toSub.size());
-        } else {
-            log.error("[{}][BREAKOUT] no instruments found in cache for expiry={} CE={} PE={} — Kite may not be connected",
-                    username, expiry, ceStrike, peStrike);
+        Optional<PremiumStrikeSelectionService.Selection> selection =
+                premiumStrikeSelectionService.selectByPremium(cfg, spot, AUTO_MIN_PREMIUM);
+        if (selection.isEmpty()) {
+            internalStopSession("No CE/PE strike with premium > " + AUTO_MIN_PREMIUM + " found near spot " + spot
+                    + " — instrument cache may not be loaded (connect Kite first)");
+            sessionPersistence.saveForUser(EngineKeys.of(username, strategyKey), session);
+            broadcastUpdate();
+            return;
         }
+
+        PremiumStrikeSelectionService.Selection s = selection.get();
+        session.setLockedCeStrike(s.ceStrike());
+        session.setLockedPeStrike(s.peStrike());
+        session.setLockedCeInstrument(s.ce().getTradingsymbol());
+        session.setLockedPeInstrument(s.pe().getTradingsymbol());
+        session.setLockedExpiry(s.expiry());
+        session.setLockedExpiryLabel("Current Week (" + s.expiry().format(DateTimeFormatter.ofPattern("dd MMM", Locale.ENGLISH)) + ")");
+
+        Map<Long, String> toSub = new HashMap<>();
+        toSub.put(s.ce().getInstrumentToken(), s.ce().getTradingsymbol());
+        toSub.put(s.pe().getInstrumentToken(), s.pe().getTradingsymbol());
+        subscribeInstruments(toSub);
+        kiteTickerService.subscribe(toSub);
+
+        log.info("[{}][BREAKOUT] Auto strike selection locked: CE={} PE={} expiry={}",
+                username, s.ce().getTradingsymbol(), s.pe().getTradingsymbol(), s.expiry());
+        sessionPersistence.saveForUser(EngineKeys.of(username, strategyKey), session);
+        broadcastUpdate();
     }
 
     public synchronized TradeSession stopSession() {
         if (session == null) throw new IllegalStateException("No active session for user: " + username);
+        if (strikeSelectionTask != null) {
+            strikeSelectionTask.cancel(false);
+            strikeSelectionTask = null;
+        }
         if (session.getState() == StrategyState.IN_POSITION) {
             exitCurrentPosition("MANUAL_STOP");
         }
@@ -397,6 +430,12 @@ public class BreakoutStrategyEngine implements TradingEngine {
                     .ifPresent(i -> tokenToSymbol.put(i.getInstrumentToken(), i.getTradingsymbol()));
         }
         subscribedTokens.addAll(tokenToSymbol.keySet());
+        TradingConfig cfg = restored.getConfig();
+        if (cfg != null && cfg.getStrikeMode() == StrikeMode.AUTO_ATM
+                && restored.getState() == StrategyState.WAITING_FOR_CANDLES
+                && restored.getLockedCeInstrument() == null) {
+            scheduleStrikeSelection(restored.getSessionId(), restored.getTradeDate(), cfg.getStartCandleTime());
+        }
         log.info("[{}][BREAKOUT] Session {} restored (state={})", username, restored.getSessionId(), restored.getState());
     }
 
