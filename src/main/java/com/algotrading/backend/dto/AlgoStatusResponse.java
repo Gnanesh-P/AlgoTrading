@@ -59,6 +59,11 @@ public class AlgoStatusResponse {
     // closed most recently) so the UI can show CE and PE High/Low side by side.
     private CandleInfo ceReferenceCandle;
     private CandleInfo peReferenceCandle;
+    // NIFTY Breakout V2 only: live-adjustable retest offset, and the current runaway-abandon
+    // threshold (config.maxChasePoints + any growth accumulated from losing reversal exits).
+    // Zero/unset for every other strategy.
+    private double breakoutPoints;
+    private double maxChasePoints;
 
     @Data
     @Builder

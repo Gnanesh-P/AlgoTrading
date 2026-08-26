@@ -583,10 +583,10 @@ public class TradingStrategyService {
     }
 
     /**
-     * End-of-day automatic square-off at 15:29.
+     * End-of-day automatic square-off at 15:14.
      * Exits open positions and stops the session when squareOffEod is enabled.
      */
-    @Scheduled(cron = "0 29 15 * * MON-FRI")
+    @Scheduled(cron = "0 14 15 * * MON-FRI")
     public void squareOffEodPositions() {
         TradeSession session = cache.getSession();
         if (session == null) return;
@@ -598,11 +598,11 @@ public class TradingStrategyService {
             return;
         }
 
-        log.info("EOD 15:29 square-off triggered for session {}", session.getSessionId());
+        log.info("EOD 15:14 square-off triggered for session {}", session.getSessionId());
         if (session.getState() == StrategyState.IN_POSITION) {
             exitCurrentPosition(session, "EOD");
         }
-        stopSession(session, "End of day square-off at 15:29");
+        stopSession(session, "End of day square-off at 15:14");
         sessionPersistence.clear();         // clean day end — no recovery needed tomorrow
         cache.setSession(session);
         broadcastUpdate(session);

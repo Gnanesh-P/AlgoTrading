@@ -20,7 +20,7 @@ import org.springframework.scheduling.config.ScheduledTaskRegistrar;
  *
  * In practice: any time the Kite REST call is slow (proxy hiccup, Kite API rate limiting/latency)
  * it can block for up to 30 seconds on that single thread, during which NOTHING else scheduled
- * can run — live P&L broadcasts stall, and in the worst case the 15:29 EOD square-off cron could
+ * can run — live P&L broadcasts stall, and in the worst case the 15:14 EOD square-off cron could
  * be delayed behind a stuck REST call. This compounds the longer the app runs and the more often
  * the WebSocket ticker drops (triggering the REST poll fallback), matching the reported "keeps
  * getting slower while a strategy runs" behavior.

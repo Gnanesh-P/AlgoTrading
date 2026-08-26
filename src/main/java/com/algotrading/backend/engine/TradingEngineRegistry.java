@@ -210,9 +210,9 @@ public class TradingEngineRegistry {
         });
     }
 
-    @Scheduled(cron = "0 29 15 * * MON-FRI", zone = "Asia/Kolkata")
+    @Scheduled(cron = "0 14 15 * * MON-FRI", zone = "Asia/Kolkata")
     public void squareOffAllEnginesEod() {
-        log.info("EOD 15:29 IST — running square-off for {} engines", engines.size());
+        log.info("EOD 15:14 IST — running square-off for {} engines", engines.size());
         engines.values().forEach(engine -> {
             try {
                 engine.squareOffEod();

@@ -68,6 +68,12 @@ public class TradeSession {
     private double cumulativePnL;
     private double openPnL;             // P&L on current open position
 
+    // NIFTY Breakout V2 only: running total of points lost on reversal exits (entryPrice -
+    // exitPrice when positive), added on top of config.maxChasePoints for each subsequent
+    // reversal leg's runaway-abandon threshold — a losing reversal makes the algo willing to
+    // chase further on the next attempt to recover the lost ground. Unused by other strategies.
+    private double chasePointsGrowth;
+
     // Trailing profit state
     private boolean trailingActive;          // true once targetProfit is first breached
     private double  trailingHighWatermark;   // running max PnL since trailing activated

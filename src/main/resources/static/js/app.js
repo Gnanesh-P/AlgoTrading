@@ -177,12 +177,20 @@ function buildOiPanelHtml() {
         <div class="oi-stat"><div class="oi-stat-label">PCR</div><div class="oi-stat-value" id="oi-pcr">—</div></div>
       </div>
       <div class="oi-stat-row">
-        <div class="oi-stat oi-support"><div class="oi-stat-label">Support</div><div class="oi-stat-value" id="oi-support">—</div></div>
-        <div class="oi-stat oi-resistance"><div class="oi-stat-label">Resistance</div><div class="oi-stat-value" id="oi-resistance">—</div></div>
-      </div>
-      <div class="oi-stat-row">
         <div class="oi-stat"><div class="oi-stat-label">Call OI Δ</div><div class="oi-stat-value" id="oi-call-change">—</div></div>
         <div class="oi-stat"><div class="oi-stat-label">Put OI Δ</div><div class="oi-stat-value" id="oi-put-change">—</div></div>
+      </div>
+
+      <div class="oi-reasoning-title">OI Support &amp; Resistance <span id="oi-levels-asof" class="oi-levels-asof"></span></div>
+      <div class="oi-levels-row">
+        <div class="oi-levels-col">
+          <div class="oi-levels-col-label oi-levels-col-support">Support</div>
+          <div id="oi-support-levels" class="oi-levels-list"></div>
+        </div>
+        <div class="oi-levels-col">
+          <div class="oi-levels-col-label oi-levels-col-resistance">Resistance</div>
+          <div id="oi-resistance-levels" class="oi-levels-list"></div>
+        </div>
       </div>
 
       <div class="oi-reasoning-title">Why</div>
@@ -191,6 +199,34 @@ function buildOiPanelHtml() {
       <div class="oi-disclaimer">Heuristic read of OI/PCR positioning — not financial advice. Updated <span id="oi-asof">—</span></div>
     </div>
   </div>`;
+}
+
+const OI_STRENGTH_LABELS = {
+  VERY_STRONG: 'Very Strong',
+  STRONG:      'Strong',
+  MEDIUM:      'Medium',
+  WEAK:        'Weak',
+};
+
+// Renders SUP1-3 / RES1-3 (monthly OI, high priority, merged with weekly OI, secondary priority —
+// see OiSignalService) as a small ranked list, nearest-to-spot first. `levels` may be shorter than
+// 3 entries if fewer candidate strikes were found on that side.
+function renderOiLevels(levels, containerId, prefix, side) {
+  const el = document.getElementById(containerId);
+  if (!el) return;
+  if (!levels || levels.length === 0) {
+    el.innerHTML = '<div class="oi-level-empty">—</div>';
+    return;
+  }
+  el.innerHTML = levels.map((lvl, i) => {
+    const strengthClass = String(lvl.strength || '').toLowerCase().replace(/_/g, '-');
+    return `
+      <div class="oi-level-row oi-level-${side} oi-level-${strengthClass}">
+        <span class="oi-level-tag">${prefix}${i + 1}</span>
+        <span class="oi-level-strike">${Number(lvl.strike).toLocaleString('en-IN')}</span>
+        <span class="oi-level-strength">${OI_STRENGTH_LABELS[lvl.strength] || lvl.strength || '—'}</span>
+      </div>`;
+  }).join('');
 }
 
 async function refreshOiSignal() {
@@ -212,13 +248,14 @@ async function refreshOiSignal() {
     if (placeholder) placeholder.classList.add('hidden');
     if (content) content.classList.remove('hidden');
 
-    setText('oi-expiry', 'Expiry ' + (data.expiryLabel || '—'));
+    setText('oi-expiry', 'Weekly ' + (data.expiryLabel || '—') + (data.monthlyExpiryLabel ? '  ·  Monthly ' + data.monthlyExpiryLabel : ''));
     setText('oi-ltp', fmt(data.ltp));
     setText('oi-pcr', (data.pcr || 0).toFixed(2));
-    setText('oi-support', data.supportStrike);
-    setText('oi-resistance', data.resistanceStrike);
     setText('oi-call-change', (data.callOiChangePct >= 0 ? '+' : '') + (data.callOiChangePct || 0).toFixed(1) + '%');
     setText('oi-put-change', (data.putOiChangePct >= 0 ? '+' : '') + (data.putOiChangePct || 0).toFixed(1) + '%');
+    renderOiLevels(data.supportLevels, 'oi-support-levels', 'SUP', 'support');
+    renderOiLevels(data.resistanceLevels, 'oi-resistance-levels', 'RES', 'resistance');
+    setText('oi-levels-asof', data.levelsAsOf ? '· updated ' + formatTime(data.levelsAsOf) : '');
 
     const signalClass = String(data.signal || 'neutral').toLowerCase().replace(/_/g, '-');
     const badge = document.getElementById('oi-signal-badge');
@@ -867,6 +904,7 @@ function renderSession(key, s) {
   if (strip) {
     strip.classList.remove('hidden');
     const setText = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
+    const strat = STRATEGIES.find(x => x.key === key);
     setText('cfg-chip-future-' + key, s.futureSymbol || '—');
     setText('cfg-chip-dir-' + key,    s.tradeDirection === 'SELL' ? '📉 Sell' : '📈 Buy');
     setText('cfg-chip-time-' + key,   s.entryStartTime ? '⏱ ' + s.entryStartTime : '—');
@@ -874,12 +912,19 @@ function renderSession(key, s) {
     setText('cfg-chip-sl-' + key,     'SL ₹'     + fmt(s.stopLossPoints || 0));
     setText('cfg-chip-lots-' + key,   (s.lotQuantity || 1) + ' lot = ' + (s.totalQuantity || 0) + ' qty');
     setText('cfg-chip-mode-' + key,   s.paperTrade ? '📄 Paper' : '🔴 Live');
-    setText('cfg-chip-strike-' + key, '✋ Manual Strike');
+    // NIFTY Breakout V2 always auto-selects its own strikes (no MANUAL mode exists for it) —
+    // for every other strategy, show whichever mode was actually configured for this session.
+    const isAutoStrike = (strat && strat.autoStrikeSelect) || s.strikeMode === 'AUTO_ATM';
+    setText('cfg-chip-strike-' + key, isAutoStrike ? '🤖 Auto Strike' : '✋ Manual Strike');
+    setText('cfg-chip-reversals-' + key,
+      'Reversals: ' + (s.reversalCount || 0) + '/' + (s.maxReversals < 0 ? '∞' : (s.maxReversals || 0)));
+    if (strat && strat.hasLiveBreakoutPoints) {
+      setText('cfg-chip-breakout-' + key, 'Chase: ' + fmt(s.breakoutPoints || 0) + ' / ' + fmt(s.maxChasePoints || 0));
+    }
     if (s.lockedCeInstrument) setText('cfg-chip-ce-' + key, 'CE: ' + s.lockedCeInstrument);
     if (s.lockedPeInstrument) setText('cfg-chip-pe-' + key, 'PE: ' + s.lockedPeInstrument);
     // Bank Nifty trades monthly now — swap "Week" -> "Month" in the backend's label text for
     // display only (e.g. "Current Week (28 Jul)" -> "Current Month (28 Jul)").
-    const strat = STRATEGIES.find(x => x.key === key);
     const expiryLabel = strat && strat.index === 'BANKNIFTY'
       ? (s.lockedExpiryLabel || '').replace(/Week/g, 'Month')
       : s.lockedExpiryLabel;
@@ -901,7 +946,7 @@ function renderSession(key, s) {
   }
 
   const reversalsEl = document.getElementById('s-reversals-' + key);
-  if (reversalsEl) reversalsEl.textContent = (s.reversalCount || 0) + ' / ' + (s.maxReversals || 0);
+  if (reversalsEl) reversalsEl.textContent = (s.reversalCount || 0) + ' / ' + (s.maxReversals < 0 ? '∞' : (s.maxReversals || 0));
 
   const dirEl = document.getElementById('s-direction-' + key);
   if (dirEl) {
@@ -1028,10 +1073,12 @@ function renderSession(key, s) {
       const liveTgt   = document.getElementById('live-target-' + key);
       const liveSl    = document.getElementById('live-sl-' + key);
       const liveTrl   = document.getElementById('live-trailing-' + key);
+      const liveBrk   = document.getElementById('live-breakout-pts-' + key);
       const liveSlChk = document.getElementById('live-sl-enabled-' + key);
       if (liveTgt && !liveTgt.value) liveTgt.value = target || '';
       if (liveSl  && !liveSl.value)  liveSl.value  = sl > 0 ? sl : '';
       if (liveTrl && !liveTrl.value) liveTrl.value  = s.trailingProfit || 0;
+      if (liveBrk && !liveBrk.value) liveBrk.value  = s.breakoutPoints || '';
       if (liveSlChk && sl > 0 && !liveSlChk.dataset.init) {
         liveSlChk.checked = true;
         liveSlChk.dataset.init = '1';
@@ -1044,9 +1091,11 @@ function renderSession(key, s) {
       const liveTgt = document.getElementById('live-target-' + key);
       const liveSl  = document.getElementById('live-sl-' + key);
       const liveTrl = document.getElementById('live-trailing-' + key);
+      const liveBrk = document.getElementById('live-breakout-pts-' + key);
       if (liveTgt) liveTgt.value = '';
       if (liveSl)  liveSl.value  = '';
       if (liveTrl) liveTrl.value  = '';
+      if (liveBrk) liveBrk.value  = '';
     }
   }
 
@@ -1080,14 +1129,16 @@ function renderUserSignalPanel(key, s) {
       dirLabel.style.color = 'var(--text2)';
     }
   }
-  const userMode   = document.getElementById('user-trade-mode-info-' + key);
-  const userLots   = document.getElementById('user-lots-info-' + key);
-  const userTarget = document.getElementById('user-target-info-' + key);
-  const userSl     = document.getElementById('user-sl-info-' + key);
-  if (userMode)   userMode.textContent   = s.paperTrade ? '📄 Paper' : '🔴 Live';
-  if (userLots)   userLots.textContent   = (s.lotQuantity || 1) + ' lot(s)';
-  if (userTarget) userTarget.textContent = s.targetPnL ? '₹' + fmt(s.targetPnL) : '—';
-  if (userSl)     userSl.textContent     = (s.stopLossPoints || 0) > 0 ? '₹' + fmt(s.stopLossPoints) : 'Off';
+  const userMode      = document.getElementById('user-trade-mode-info-' + key);
+  const userLots      = document.getElementById('user-lots-info-' + key);
+  const userTarget    = document.getElementById('user-target-info-' + key);
+  const userSl        = document.getElementById('user-sl-info-' + key);
+  const userReversals = document.getElementById('user-reversals-info-' + key);
+  if (userMode)      userMode.textContent      = s.paperTrade ? '📄 Paper' : '🔴 Live';
+  if (userLots)      userLots.textContent      = (s.lotQuantity || 1) + ' lot(s)';
+  if (userTarget)    userTarget.textContent    = s.targetPnL ? '₹' + fmt(s.targetPnL) : '—';
+  if (userSl)        userSl.textContent        = (s.stopLossPoints || 0) > 0 ? '₹' + fmt(s.stopLossPoints) : 'Off';
+  if (userReversals) userReversals.textContent = (s.reversalCount || 0) + ' / ' + (s.maxReversals < 0 ? '∞' : (s.maxReversals || 0));
 }
 
 function renderUserSessionCard(key, s) {
@@ -1737,6 +1788,8 @@ function buildCardHtml(s) {
       <span class="cfg-chip cfg-chip-sl" id="cfg-chip-sl-${k}">—</span>
       <span class="cfg-chip" id="cfg-chip-lots-${k}">—</span>
       <span class="cfg-chip" id="cfg-chip-mode-${k}">—</span>
+      <span class="cfg-chip" id="cfg-chip-reversals-${k}">—</span>
+      ${s.hasLiveBreakoutPoints ? `<span class="cfg-chip" id="cfg-chip-breakout-${k}">—</span>` : ''}
       <span class="cfg-chip" id="cfg-chip-ce-${k}">CE —</span>
       <span class="cfg-chip" id="cfg-chip-pe-${k}">PE —</span>
     </div>
@@ -1807,6 +1860,10 @@ function buildCardHtml(s) {
           <div class="signal-info-row">
             <span class="signal-info-label">SL</span>
             <span class="signal-info-value" id="user-sl-info-${k}">—</span>
+          </div>
+          <div class="signal-info-row">
+            <span class="signal-info-label">Reversals</span>
+            <span class="signal-info-value" id="user-reversals-info-${k}">0 / 0</span>
           </div>
         </div>
       </div>

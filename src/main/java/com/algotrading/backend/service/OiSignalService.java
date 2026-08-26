@@ -9,6 +9,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
+import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
@@ -48,10 +49,20 @@ public class OiSignalService {
     private static final String INDEX = "NIFTY";
     private static final int STRIKE_GAP = 50;
     private static final int STRIKE_RANGE = 400;
+    // Monthly OI walls tend to sit further from spot than weekly ones, so the monthly scan uses a
+    // wider strike window than the weekly PCR scan above.
+    private static final int MONTHLY_STRIKE_RANGE = 1000;
     private static final long CACHE_TTL_MS = 30_000;
     private static final long MIN_BASELINE_AGE_MS = 120_000; // don't compute % change over <2min — too noisy
     private static final long MAX_HISTORY_AGE_MS = 15 * 60_000;
     private static final int MAX_HISTORY = 20;
+
+    // OI-based Support/Resistance level candidates (see class javadoc addendum below) refresh at
+    // most every 30 minutes — option OI shifts slowly, and recomputing it needs an extra option
+    // chain scan (monthly, wider strike window) on top of the fast 30s PCR cache above.
+    private static final long LEVELS_CACHE_TTL_MS = 30 * 60_000L;
+    private static final int[] MONTHLY_LEVEL_SCORES = {100, 80, 60};
+    private static final int[] WEEKLY_LEVEL_SCORES  = {40, 30, 20};
 
     private static final Map<String, String> OI_SIGNAL_TELEGRAM_LABELS = Map.of(
             "STRONG_BULLISH_REVERSAL", "🚀 Strong Bullish Reversal",
@@ -72,8 +83,19 @@ public class OiSignalService {
     private volatile long cachedAt = 0;
     private volatile String lastNotifiedSignal;
 
+    // OI-based Support/Resistance level candidates — every strike that made the monthly and/or
+    // weekly top-3-by-OI ranking, with its merged score. Refreshed at most every
+    // LEVELS_CACHE_TTL_MS; the final SUP1-3/RES1-3 (filtered by spot position, nearest-first) are
+    // recomputed from these candidates on every request using the LATEST spot price, since that
+    // part is free (no extra Kite call) and keeps "nearest to spot" accurate even between refreshes.
+    private volatile Map<Integer, Integer> cachedSupportCandidates = Map.of();
+    private volatile Map<Integer, Integer> cachedResistanceCandidates = Map.of();
+    private volatile String cachedMonthlyExpiryLabel = "";
+    private volatile long levelsCachedAt = 0;
+
     private record Snapshot(long timestamp, long totalCallOi, long totalPutOi) {}
     private record SignalResult(int score, String label, List<String> reasoning) {}
+    private record ChainSymbols(Map<Integer, String> ce, Map<Integer, String> pe) {}
 
     public synchronized OiSignalResponse getSignal() {
         long now = System.currentTimeMillis();
@@ -156,30 +178,164 @@ public class OiSignalService {
                 ? (totalPutOi - baseline.totalPutOi()) * 100.0 / baseline.totalPutOi() : 0;
         recordSnapshot(nowMs, totalCallOi, totalPutOi);
 
-        SignalResult result = computeSignalScore(pcr, callChangePct, putChangePct, ltp, supportStrike, resistanceStrike);
+        // OI-based Support/Resistance indicator (monthly + weekly merged, top-3 each side) —
+        // candidates refresh at most every 30 min (see refreshLevelCandidatesIfStale); the final
+        // SUP1-3/RES1-3 selection (filter by spot position, nearest-first) always uses the LATEST
+        // ltp, which is free (no extra Kite call).
+        refreshLevelCandidatesIfStale(atm);
+        List<OiSignalResponse.LevelInfo> supportLevels = finalLevels(cachedSupportCandidates, ltp, true);
+        List<OiSignalResponse.LevelInfo> resistanceLevels = finalLevels(cachedResistanceCandidates, ltp, false);
+
+        // Feed the nearest OI-based level into the existing PCR/momentum proximity check in place
+        // of the old crude "single max-OI strike in the weekly ATM window" — falls back to that
+        // crude value if the new indicator hasn't produced a candidate on either side yet.
+        int effectiveSupportStrike = !supportLevels.isEmpty() ? supportLevels.get(0).getStrike() : supportStrike;
+        int effectiveResistanceStrike = !resistanceLevels.isEmpty() ? resistanceLevels.get(0).getStrike() : resistanceStrike;
+
+        SignalResult result = computeSignalScore(pcr, callChangePct, putChangePct, ltp,
+                effectiveSupportStrike, effectiveResistanceStrike);
 
         OiSignalResponse response = OiSignalResponse.builder()
                 .dataAvailable(true)
                 .index(INDEX)
                 .ltp(ltp)
                 .expiryLabel(expiry.format(DateTimeFormatter.ofPattern("dd MMM", Locale.ENGLISH)))
+                .monthlyExpiryLabel(cachedMonthlyExpiryLabel)
                 .pcr(round2(pcr))
                 .totalCallOi(totalCallOi)
                 .totalPutOi(totalPutOi)
                 .callOiChangePct(round2(callChangePct))
                 .putOiChangePct(round2(putChangePct))
-                .supportStrike(supportStrike)
-                .resistanceStrike(resistanceStrike)
+                .supportStrike(effectiveSupportStrike)
+                .resistanceStrike(effectiveResistanceStrike)
                 .signal(result.label())
                 .signalScore(result.score())
                 .reasoning(result.reasoning())
                 .strikes(strikeOiList)
+                .supportLevels(supportLevels)
+                .resistanceLevels(resistanceLevels)
+                .levelsAsOf(levelsCachedAt > 0
+                        ? Instant.ofEpochMilli(levelsCachedAt).atZone(ZoneId.of("Asia/Kolkata")).toLocalDateTime()
+                        : null)
                 .asOf(LocalDateTime.now(ZoneId.of("Asia/Kolkata")))
                 .build();
 
-        // Telegram alert disabled for now — re-enable by uncommenting the line below.
-        // notifyIfSignalChanged(response);
+        notifyIfSignalChanged(response);
         return response;
+    }
+
+    /**
+     * Recomputes the monthly+weekly OI-based Support/Resistance candidate scores if the cache is
+     * older than {@value #LEVELS_CACHE_TTL_MS}ms. Runs its own dedicated option-chain fetch
+     * (monthly at a wider ATM±{@value #MONTHLY_STRIKE_RANGE} window, weekly at ATM±{@value
+     * #STRIKE_RANGE}) independent of the fast 30s PCR fetch above, since this indicator is
+     * deliberately refreshed on a much slower cadence. On failure, keeps whatever was cached
+     * before rather than clearing it — a transient Kite hiccup shouldn't blank out the panel.
+     */
+    private void refreshLevelCandidatesIfStale(int atm) {
+        long now = System.currentTimeMillis();
+        if (now - levelsCachedAt < LEVELS_CACHE_TTL_MS) return;
+        try {
+            LocalDate weeklyExpiry = optionInstrumentService.getAutoExpiryDate();
+            LocalDate monthlyExpiry = optionInstrumentService.getMonthlyExpiryDate();
+
+            ChainSymbols weeklySymbols = buildChainSymbols(weeklyExpiry, atm, STRIKE_RANGE);
+            ChainSymbols monthlySymbols = buildChainSymbols(monthlyExpiry, atm, MONTHLY_STRIKE_RANGE);
+
+            List<String> quoteKeys = new ArrayList<>();
+            weeklySymbols.ce().values().forEach(s -> quoteKeys.add("NFO:" + s));
+            weeklySymbols.pe().values().forEach(s -> quoteKeys.add("NFO:" + s));
+            monthlySymbols.ce().values().forEach(s -> quoteKeys.add("NFO:" + s));
+            monthlySymbols.pe().values().forEach(s -> quoteKeys.add("NFO:" + s));
+            if (quoteKeys.isEmpty()) return; // instrument cache not loaded yet — keep prior cache
+
+            Map<String, Quote> quotes = kiteConnect.getQuote(quoteKeys.stream().distinct().toArray(String[]::new));
+
+            Map<Integer, Long> weeklyCallOi  = toOiMap(weeklySymbols.ce(), quotes);
+            Map<Integer, Long> weeklyPutOi   = toOiMap(weeklySymbols.pe(), quotes);
+            Map<Integer, Long> monthlyCallOi = toOiMap(monthlySymbols.ce(), quotes);
+            Map<Integer, Long> monthlyPutOi  = toOiMap(monthlySymbols.pe(), quotes);
+
+            Map<Integer, Integer> monthlySupport    = rankTopScores(monthlyPutOi, MONTHLY_LEVEL_SCORES);
+            Map<Integer, Integer> monthlyResistance = rankTopScores(monthlyCallOi, MONTHLY_LEVEL_SCORES);
+            Map<Integer, Integer> weeklySupport     = rankTopScores(weeklyPutOi, WEEKLY_LEVEL_SCORES);
+            Map<Integer, Integer> weeklyResistance  = rankTopScores(weeklyCallOi, WEEKLY_LEVEL_SCORES);
+
+            cachedSupportCandidates = mergeScores(monthlySupport, weeklySupport);
+            cachedResistanceCandidates = mergeScores(monthlyResistance, weeklyResistance);
+            cachedMonthlyExpiryLabel = monthlyExpiry.format(DateTimeFormatter.ofPattern("dd MMM", Locale.ENGLISH));
+            levelsCachedAt = now;
+        } catch (Exception | KiteException e) {
+            log.warn("OI Support/Resistance level refresh failed (keeping previous levels): {}", e.getMessage());
+        }
+    }
+
+    private ChainSymbols buildChainSymbols(LocalDate expiry, int atm, int range) {
+        Map<Integer, String> ce = new LinkedHashMap<>();
+        Map<Integer, String> pe = new LinkedHashMap<>();
+        for (int strike = atm - range; strike <= atm + range; strike += STRIKE_GAP) {
+            int s = strike;
+            kiteInstrumentService.findOption(INDEX, expiry, s, "CE").ifPresent(i -> ce.put(s, i.getTradingsymbol()));
+            kiteInstrumentService.findOption(INDEX, expiry, s, "PE").ifPresent(i -> pe.put(s, i.getTradingsymbol()));
+        }
+        return new ChainSymbols(ce, pe);
+    }
+
+    private Map<Integer, Long> toOiMap(Map<Integer, String> symbolMap, Map<String, Quote> quotes) {
+        Map<Integer, Long> result = new LinkedHashMap<>();
+        symbolMap.forEach((strike, sym) -> result.put(strike, oiFor(quotes, sym)));
+        return result;
+    }
+
+    /** Ranks strikes by OI descending and assigns scores[0] to the top strike, scores[1] to 2nd, etc. */
+    private Map<Integer, Integer> rankTopScores(Map<Integer, Long> oiMap, int[] scores) {
+        List<Map.Entry<Integer, Long>> ranked = oiMap.entrySet().stream()
+                .filter(e -> e.getValue() != null && e.getValue() > 0)
+                .sorted((a, b) -> {
+                    int cmp = Long.compare(b.getValue(), a.getValue());
+                    return cmp != 0 ? cmp : Integer.compare(a.getKey(), b.getKey());
+                })
+                .limit(scores.length)
+                .toList();
+        Map<Integer, Integer> result = new LinkedHashMap<>();
+        for (int i = 0; i < ranked.size(); i++) {
+            result.put(ranked.get(i).getKey(), scores[i]);
+        }
+        return result;
+    }
+
+    /** Strike exists in both → scores add; strike exists in only one → that score is used as-is. */
+    private Map<Integer, Integer> mergeScores(Map<Integer, Integer> monthly, Map<Integer, Integer> weekly) {
+        Map<Integer, Integer> merged = new LinkedHashMap<>(monthly);
+        weekly.forEach((strike, score) -> merged.merge(strike, score, Integer::sum));
+        return merged;
+    }
+
+    /**
+     * Support: keep only candidate strikes BELOW spot, sort descending (closest to spot first),
+     * take 3 → SUP1..SUP3. Resistance: keep only strikes ABOVE spot, sort ascending, take 3 →
+     * RES1..RES3.
+     */
+    private List<OiSignalResponse.LevelInfo> finalLevels(Map<Integer, Integer> candidates, double spot, boolean support) {
+        return candidates.entrySet().stream()
+                .filter(e -> support ? e.getKey() < spot : e.getKey() > spot)
+                .sorted(support
+                        ? (a, b) -> Integer.compare(b.getKey(), a.getKey())
+                        : Map.Entry.comparingByKey())
+                .limit(3)
+                .map(e -> OiSignalResponse.LevelInfo.builder()
+                        .strike(e.getKey())
+                        .score(e.getValue())
+                        .strength(strengthFor(e.getValue()))
+                        .build())
+                .toList();
+    }
+
+    private String strengthFor(int score) {
+        if (score >= 120) return "VERY_STRONG";
+        if (score >= 80) return "STRONG";
+        if (score >= 40) return "MEDIUM";
+        return "WEAK";
     }
 
     /**

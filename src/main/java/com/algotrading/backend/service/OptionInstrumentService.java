@@ -207,6 +207,32 @@ public class OptionInstrumentService {
                 .build();
     }
 
+    /**
+     * Monthly expiry — the last TUESDAY of the current calendar month (NSE rule), holiday-adjusted
+     * like {@link #findWeeklyExpiry(LocalDate)}. Rolls to next month once this month's monthly
+     * expiry date has already passed. Used by the OI-based Support/Resistance indicator
+     * ({@link OiSignalService}), which weighs monthly OI more heavily than weekly OI.
+     */
+    public LocalDate getMonthlyExpiryDate() {
+        LocalDate today = LocalDate.now(ZoneId.of("Asia/Kolkata"));
+        LocalDate expiry = lastWeekdayOfMonth(today, DayOfWeek.TUESDAY);
+        if (expiry.isBefore(today)) {
+            expiry = lastWeekdayOfMonth(today.plusMonths(1).withDayOfMonth(1), DayOfWeek.TUESDAY);
+        }
+        return expiry;
+    }
+
+    private LocalDate lastWeekdayOfMonth(LocalDate anchor, DayOfWeek weekday) {
+        LocalDate d = anchor.withDayOfMonth(anchor.lengthOfMonth());
+        while (d.getDayOfWeek() != weekday) {
+            d = d.minusDays(1);
+        }
+        while (NSE_HOLIDAYS.contains(d) || d.getDayOfWeek() == DayOfWeek.SATURDAY || d.getDayOfWeek() == DayOfWeek.SUNDAY) {
+            d = d.minusDays(1);
+        }
+        return d;
+    }
+
     public LocalDate getAutoExpiryDate() {
         LocalDate today = LocalDate.now(ZoneId.of("Asia/Kolkata"));
         LocalDate expiry = findWeeklyExpiry(today);

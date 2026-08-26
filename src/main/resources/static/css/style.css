@@ -321,6 +321,45 @@ select option { background: var(--bg3); }
 .oi-support .oi-stat-value { color: #22c55e; }
 .oi-resistance .oi-stat-value { color: #f43f5e; }
 
+/* OI-based Support/Resistance levels (SUP1-3 / RES1-3) — monthly OI (high priority) merged with
+   weekly OI (secondary priority), see OiSignalService for the scoring rules. */
+.oi-levels-asof { font-size: 9px; font-weight: 400; text-transform: none; color: var(--text2); letter-spacing: 0; }
+.oi-levels-row { display: flex; gap: 10px; }
+.oi-levels-col { flex: 1; min-width: 0; }
+.oi-levels-col-label {
+  font-size: 10px; text-transform: uppercase; letter-spacing: 0.4px; font-weight: 700;
+  margin-bottom: 6px; text-align: center;
+}
+.oi-levels-col-support    { color: #22c55e; }
+.oi-levels-col-resistance { color: #f43f5e; }
+.oi-levels-list { display: flex; flex-direction: column; gap: 6px; }
+.oi-level-empty {
+  font-size: 12px; color: var(--text2); text-align: center; padding: 10px 0;
+  background: var(--bg3); border: 1px solid var(--border); border-radius: var(--radius);
+}
+.oi-level-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 6px;
+  background: var(--bg3); border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 6px 9px;
+}
+.oi-level-tag { font-size: 10px; font-weight: 700; color: var(--text2); min-width: 30px; }
+.oi-level-strike { font-family: monospace; font-size: 13px; font-weight: 700; flex: 1; text-align: center; }
+.oi-level-strength { font-size: 9px; text-transform: uppercase; letter-spacing: 0.3px; white-space: nowrap; }
+
+.oi-level-support.oi-level-very-strong  { border-color: rgba(34,197,94,0.55);  background: rgba(34,197,94,0.16); }
+.oi-level-support.oi-level-strong       { border-color: rgba(34,197,94,0.35);  background: rgba(34,197,94,0.10); }
+.oi-level-support.oi-level-medium       { border-color: rgba(34,197,94,0.2);   background: rgba(34,197,94,0.05); }
+.oi-level-support.oi-level-weak         { border-color: var(--border);        background: var(--bg3); }
+.oi-level-support .oi-level-strike      { color: #22c55e; }
+
+.oi-level-resistance.oi-level-very-strong { border-color: rgba(244,63,94,0.55); background: rgba(244,63,94,0.16); }
+.oi-level-resistance.oi-level-strong      { border-color: rgba(244,63,94,0.35); background: rgba(244,63,94,0.10); }
+.oi-level-resistance.oi-level-medium      { border-color: rgba(244,63,94,0.2);  background: rgba(244,63,94,0.05); }
+.oi-level-resistance.oi-level-weak        { border-color: var(--border);       background: var(--bg3); }
+.oi-level-resistance .oi-level-strike     { color: #f43f5e; }
+
+.oi-level-strength { color: var(--text2); }
+
 .oi-reasoning-title {
   font-size: 11px; font-weight: 700; color: var(--text2); text-transform: uppercase;
   letter-spacing: 0.5px; margin: 16px 0 8px;

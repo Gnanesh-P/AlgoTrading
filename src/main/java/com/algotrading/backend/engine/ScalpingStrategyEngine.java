@@ -438,8 +438,8 @@ public class ScalpingStrategyEngine implements TradingEngine {
         formingCandles.clear();
 
         String strikeDetail = config.getStrikeMode() == StrikeMode.AUTO_ATM
-                ? "AUTO ATM"
-                : String.format("MANUAL | CE: %s | PE: %s",
+                ? "Auto (premium > 200)"
+                : String.format("Manual | CE: %s | PE: %s",
                         config.getCeInstrument() != null ? config.getCeInstrument() : "—",
                         config.getPeInstrument() != null ? config.getPeInstrument() : "—");
 
@@ -636,11 +636,11 @@ public class ScalpingStrategyEngine implements TradingEngine {
             log.info("[{}] EOD reached but squareOffEod=false — no auto exit", username);
             return;
         }
-        log.info("[{}] EOD 15:29 IST square-off triggered", username);
+        log.info("[{}] EOD 15:14 IST square-off triggered", username);
         if (session.getState() == StrategyState.IN_POSITION) {
             exitCurrentPosition("EOD");
         }
-        internalStopSession("End of day square-off at 15:29");
+        internalStopSession("End of day square-off at 15:14");
         sessionPersistence.clearForUser(EngineKeys.of(username, strategyKey));
         broadcastUpdate();
     }
@@ -778,7 +778,8 @@ public class ScalpingStrategyEngine implements TradingEngine {
         }
 
         if (shouldReverse) {
-            if (session.getReversalCount() >= cfg.getMaxReversals()) {
+            boolean capReached = cfg.getMaxReversals() >= 0 && session.getReversalCount() >= cfg.getMaxReversals();
+            if (capReached) {
                 log.info("[{}] Max reversals ({}) exhausted → stopping", username, cfg.getMaxReversals());
                 exitCurrentPosition("MAX_REVERSALS");
                 internalStopSession("Max reversals exhausted");
@@ -843,10 +844,12 @@ public class ScalpingStrategyEngine implements TradingEngine {
         int effectiveStrike = strikePrice > 0 ? strikePrice : parseStrikeFromSymbol(instrument);
         if (isAdmin()) {
             String msg = String.format(
-                    "✅ <b>Position Entered</b>\nType: <code>%s %s</code>\nInstrument: <code>%s</code>\nStrike: <code>%s</code>\nPrice: <code>%.2f</code>\nQty: <code>%d</code>\nReason: <code>%s</code>",
+                    "✅ <b>Position Entered</b>\nType: <code>%s %s</code>\nInstrument: <code>%s</code>\nStrike: <code>%s</code>\nPrice: <code>%.2f</code>\nQty: <code>%d</code>\n" +
+                            "Reversals: <code>%d/%s</code>\nReason: <code>%s</code>",
                     isSell ? "SELL" : "BUY", optionType, instrument,
                     effectiveStrike > 0 ? String.valueOf(effectiveStrike) : "—",
-                    entryPrice, leg.getQuantity(), reason);
+                    entryPrice, leg.getQuantity(),
+                    session.getReversalCount(), cfg.getMaxReversals() < 0 ? "unlimited" : String.valueOf(cfg.getMaxReversals()), reason);
             sendTelegram(msg);
         }
 
@@ -885,10 +888,13 @@ public class ScalpingStrategyEngine implements TradingEngine {
                 exitPrice, legPnl, session.getCumulativePnL(), reason);
 
         if (isAdmin()) {
+            TradingConfig cfg = session.getConfig();
             String msg = String.format(
-                    "🔚 <b>Position Exited</b>\nType: <code>%s</code>\nInstrument: <code>%s</code>\nEntry: <code>%.2f</code>\nExit: <code>%.2f</code>\nP/L: <code>%.2f</code>\nReason: <code>%s</code>",
+                    "🔚 <b>Position Exited</b>\nType: <code>%s</code>\nInstrument: <code>%s</code>\nEntry: <code>%.2f</code>\nExit: <code>%.2f</code>\nP/L: <code>%.2f</code>\n" +
+                            "Reversals: <code>%d/%s</code>\nReason: <code>%s</code>",
                     openLeg.getOptionType(), openLeg.getInstrument(),
-                    openLeg.getEntryPrice(), exitPrice, legPnl, reason);
+                    openLeg.getEntryPrice(), exitPrice, legPnl,
+                    session.getReversalCount(), cfg.getMaxReversals() < 0 ? "unlimited" : String.valueOf(cfg.getMaxReversals()), reason);
             sendTelegram(msg);
         }
     }
@@ -988,10 +994,10 @@ public class ScalpingStrategyEngine implements TradingEngine {
             }
 
             String strikeInfo = cfg.getStrikeMode() == StrikeMode.AUTO_ATM
-                    ? String.format("AUTO ATM | CE: %s | PE: %s",
+                    ? String.format("Auto (premium > 200) | CE: %s | PE: %s",
                             session.getLockedCeInstrument() != null ? session.getLockedCeInstrument() : "—",
                             session.getLockedPeInstrument() != null ? session.getLockedPeInstrument() : "—")
-                    : String.format("MANUAL | CE: %s | PE: %s",
+                    : String.format("Manual | CE: %s | PE: %s",
                             session.getLockedCeInstrument() != null ? session.getLockedCeInstrument() : "—",
                             session.getLockedPeInstrument() != null ? session.getLockedPeInstrument() : "—");
 
@@ -1007,7 +1013,8 @@ public class ScalpingStrategyEngine implements TradingEngine {
                     "Futures: <code>%s</code>  |  Expiry: <code>%s</code>\n" +
                     "Start: <code>%s</code>\n" +
                     "End: <code>%s</code>\n" +
-                    "Stop Reason: <code>%s</code>\n\n" +
+                    "Stop Reason: <code>%s</code>\n" +
+                    "Reversals: <code>%d/%s</code>\n\n" +
                     "📌 First Candle: <code>%s</code>\n" +
                     "📌 Last Candle: <code>%s</code>\n\n" +
                     "<b>Trade Log:</b>\n" +
@@ -1019,6 +1026,7 @@ public class ScalpingStrategyEngine implements TradingEngine {
                     username, strategyDirection, cfg.getTradeDirection(), strikeInfo,
                     cfg.getFuturesInstrument(), cfg.getExpiryType(),
                     startT, endT, stopReason,
+                    session.getReversalCount(), cfg.getMaxReversals() < 0 ? "unlimited" : String.valueOf(cfg.getMaxReversals()),
                     firstCandleInfo, lastCandleInfo,
                     "#", "TYPE", "ENTRY", "ENTRY-T", "EXIT", "EXIT-T", "P&L", "REASON",
                     buildTextTable(), totalPnl);

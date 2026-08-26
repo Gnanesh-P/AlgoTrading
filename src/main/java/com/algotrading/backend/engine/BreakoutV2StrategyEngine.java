@@ -54,13 +54,19 @@ import java.util.stream.Collectors;
  * whole session is stopped ("stop the algo"). breakoutPoints is live-adjustable via
  * {@link #updateBreakoutPoints(double)}; maxChasePoints is not.
  *
- * Reversal: while a position is open, the OPPOSITE leg is watched for its own reference-High
- * break — that arms a reversal setup (same breakout-then-retest idea, entry = High -
- * breakoutPoints). When it retests, the current position is exited and the new leg entered
- * ("swap"); there's no separate abandon threshold for the reversal setup itself — the open
- * position just keeps running under Target/SL/Trailing regardless of how far the opposite leg
- * runs. Bounded by the existing maxReversals/reversalCount mechanism for consistency with every
- * other strategy in this codebase.
+ * Reversal (post-entry only): while a position is open, the OPPOSITE leg's reference High is
+ * watched continuously. The instant it's freshly breached (an edge-triggered check — merely being
+ * already above its high doesn't count, it must newly cross while this position is open, which
+ * prevents an instant re-flip immediately after a reversal completes), the current position is
+ * exited RIGHT AWAY (no waiting for a retest to exit) and the engine goes flat, watching only that
+ * one leg for its retest entry (price back to High - breakoutPoints) — same as the initial entry's
+ * retest mechanic, including its own runaway-abandon threshold (High + effective maxChasePoints):
+ * if price runs up that far without ever retesting, the whole session is stopped. That threshold
+ * escalates after each losing reversal exit — {@link #effectiveMaxChasePoints()} adds the points
+ * lost on the just-closed reversal leg (entryPrice - exitPrice, floored at 0) on top of
+ * config.maxChasePoints, so a subsequent chase attempt is given more room to recover the lost
+ * ground. Bounded by maxReversals/reversalCount — once the cap is hit, a fresh breach stops the
+ * whole session (closing any open position) instead of reversing.
  *
  * BUY-only (the spec never mentions writing/selling options) — order placement and P&L are
  * simplified accordingly versus the original Breakout engine's BUY/SELL branching.
@@ -93,12 +99,21 @@ public class BreakoutV2StrategyEngine implements TradingEngine {
     private final Map<Long, String> tokenToSymbol = new ConcurrentHashMap<>();
     private final Set<Long> subscribedTokens = ConcurrentHashMap.newKeySet();
 
-    // Per-leg "price has crossed reference high" flag — used both for the initial entry (waiting
-    // for retest) and, once a position is open, to mark the OPPOSITE leg's reversal setup as
-    // armed. Transient engine state (not persisted): on crash-recovery restart it resets, meaning
-    // a leg must cross its reference high again before its setup re-arms — a conservative, safe
-    // default rather than an aggressive one.
+    // Per-leg "price has crossed reference high" flag — used ONLY by the initial (pre-position)
+    // entry logic; sticky for the whole WAITING_FOR_CANDLES phase (once broken out, stays "waiting
+    // for retest" even if price dips back below high temporarily). Transient engine state (not
+    // persisted): on crash-recovery restart it resets, meaning a leg must cross its reference high
+    // again before its setup re-arms — a conservative, safe default rather than an aggressive one.
     private final Map<String, Boolean> breakoutTriggered = new ConcurrentHashMap<>();
+
+    // Reversal-watch (post-entry) state — deliberately SEPARATE from breakoutTriggered above, and
+    // edge-triggered (last-known-level comparison, re-seeded on every new position entry) rather
+    // than sticky, so a leg that's already sitting above its own high at the moment it BECOMES the
+    // "opposite" leg doesn't instantly re-fire a reversal — it must freshly cross while watched.
+    private final Map<String, Boolean> aboveHighWhileWatched = new ConcurrentHashMap<>();
+    // Set the instant a reversal-triggering exit fires; while set, the engine is flat and watching
+    // ONLY this one leg for its retest entry (High - breakoutPoints) — no re-scan of both legs.
+    private volatile OptionType pendingReversalLeg;
 
     private final MarketDataCache globalCache;
     private final OptionInstrumentService optionInstrumentService;
@@ -193,14 +208,71 @@ public class BreakoutV2StrategyEngine implements TradingEngine {
 
         if (session.getState() == StrategyState.IN_POSITION) {
             TradeEntry openLeg = session.getCurrentOpenLeg();
-            if (openLeg == null || openLeg.getOptionType() == leg) return; // no low-watch on the open leg anymore
-            // This tick is for the leg OPPOSITE the current position — watch it for a reversal setup.
-            evaluateReversalSetup(leg, ref, price, openLeg);
+            if (openLeg == null || openLeg.getOptionType() == leg) return; // no watch on the open leg itself
+            // This tick is for the leg OPPOSITE the current position — check for a FRESH High breach.
+            boolean nowAbove = price > ref.getHigh();
+            Boolean wasAbove = aboveHighWhileWatched.put(leg.name(), nowAbove);
+            boolean freshBreach = nowAbove && !Boolean.TRUE.equals(wasAbove);
+            if (freshBreach) {
+                handleReversalBreach(leg, ref, openLeg);
+            }
             return;
         }
 
         if (session.getState() != StrategyState.WAITING_FOR_CANDLES) return;
+
+        OptionType pending = pendingReversalLeg;
+        if (pending != null) {
+            // Flat, waiting on ONE specific leg's retest after an immediate reversal exit — do not
+            // re-scan the other leg for a fresh initial-style entry while this is pending.
+            if (leg != pending) return;
+            double entryTarget = ref.getHigh() - session.getConfig().getBreakoutPoints();
+            double abandonLevel = ref.getHigh() + effectiveMaxChasePoints();
+            if (price <= entryTarget) {
+                pendingReversalLeg = null;
+                enterBreakoutV2(leg, entryTarget, "REVERSAL_" + session.getReversalCount());
+                checkExitConditions();
+                persistAndBroadcast();
+            } else if (price >= abandonLevel) {
+                pendingReversalLeg = null;
+                String reason = String.format(
+                        "Runaway (reversal wait): %s reached %.2f without retesting entry %.2f (abandon level %.2f, chase growth %.2f)",
+                        leg, price, entryTarget, abandonLevel, session.getChasePointsGrowth());
+                log.info("[{}][BREAKOUT_V2] {}", username, reason);
+                internalStopSession(reason);
+                persistAndBroadcast();
+            }
+            return;
+        }
+
         evaluateEntryForLeg(leg, ref, price, "INITIAL");
+    }
+
+    /**
+     * Fresh opposite-High breach while a position is open: if reversals remain available, exit the
+     * current position immediately and start watching ONLY the breaching leg for its retest entry.
+     * If the cap is already reached, this breach instead stops the whole session (closing the open
+     * position) rather than reversing — matching every other strategy's max-reversal behavior.
+     */
+    private void handleReversalBreach(OptionType newLeg, Candle newLegRef, TradeEntry openLeg) {
+        TradingConfig cfg = session.getConfig();
+        boolean reversalAllowed = cfg.getMaxReversals() < 0 || session.getReversalCount() < cfg.getMaxReversals();
+        if (!reversalAllowed) {
+            log.info("[{}][BREAKOUT_V2] Max reversals ({}) reached — {} High breach stops the algo instead of reversing",
+                    username, cfg.getMaxReversals(), newLeg);
+            exitCurrentPosition("MAX_REVERSALS");
+            internalStopSession("Max reversals (" + cfg.getMaxReversals() + ") reached");
+            persistAndBroadcast();
+            return;
+        }
+
+        log.info("[{}][BREAKOUT_V2] {} High freshly breached while {} open — exiting immediately, now watching {} for retest @ {}",
+                username, newLeg, openLeg.getOptionType(), newLeg, newLegRef.getHigh() - cfg.getBreakoutPoints());
+        exitCurrentPosition("REVERSAL_HIGH_BREACH");
+        session.setReversalCount(session.getReversalCount() + 1);
+        session.setState(StrategyState.WAITING_FOR_CANDLES);
+        pendingReversalLeg = newLeg;
+        persistAndBroadcast();
     }
 
     /**
@@ -222,7 +294,7 @@ public class BreakoutV2StrategyEngine implements TradingEngine {
         }
 
         double entryTarget = ref.getHigh() - cfg.getBreakoutPoints();
-        double abandonLevel = ref.getHigh() + cfg.getMaxChasePoints();
+        double abandonLevel = ref.getHigh() + effectiveMaxChasePoints();
 
         if (price <= entryTarget) {
             enterBreakoutV2(leg, entryTarget, reasonPrefix);
@@ -236,50 +308,6 @@ public class BreakoutV2StrategyEngine implements TradingEngine {
             internalStopSession(reason);
             persistAndBroadcast();
         }
-    }
-
-    /**
-     * While IN_POSITION on one leg, watches the OPPOSITE leg for its own reference-High break —
-     * that arms a "reversal setup" (same breakout-then-retest idea as the initial entry, entry =
-     * High - breakoutPoints). The setup has no abandon/runaway threshold of its own — the current
-     * position keeps running under Target/SL/Trailing regardless of how far the opposite leg runs.
-     */
-    private void evaluateReversalSetup(OptionType leg, Candle ref, double price, TradeEntry openLeg) {
-        TradingConfig cfg = session.getConfig();
-        boolean armed = Boolean.TRUE.equals(breakoutTriggered.get(leg.name()));
-        if (!armed) {
-            if (price > ref.getHigh()) {
-                breakoutTriggered.put(leg.name(), true);
-                log.info("[{}][BREAKOUT_V2] {} High broken while {} is open — reversal setup armed, entry={}",
-                        username, leg, openLeg.getOptionType(), ref.getHigh() - cfg.getBreakoutPoints());
-            }
-            return;
-        }
-
-        double entryTarget = ref.getHigh() - cfg.getBreakoutPoints();
-        if (price <= entryTarget) {
-            executeReversal(leg, openLeg, entryTarget);
-        }
-    }
-
-    /** Swaps the currently open leg for the reversal-setup leg that just retested its entry. */
-    private void executeReversal(OptionType newLeg, TradeEntry openLeg, double entryTargetPrice) {
-        TradingConfig cfg = session.getConfig();
-        boolean reversalAllowed = cfg.getMaxReversals() < 0 || session.getReversalCount() < cfg.getMaxReversals();
-        if (!reversalAllowed) {
-            log.info("[{}][BREAKOUT_V2] Max reversals reached — ignoring {} reversal setup", username, newLeg);
-            return;
-        }
-
-        log.info("[{}][BREAKOUT_V2] Reversal: {} → {} @ {}", username, openLeg.getOptionType(), newLeg, entryTargetPrice);
-        exitCurrentPosition("REVERSAL");
-        session.setReversalCount(session.getReversalCount() + 1);
-        // All other pending reversal setups are implicitly cancelled: only one opposite leg ever
-        // exists relative to whichever leg is open, so swapping the open leg is itself the
-        // cancellation — evaluateReversalSetup will now watch the leg just exited instead.
-        enterBreakoutV2(newLeg, entryTargetPrice, "REVERSAL_" + session.getReversalCount());
-        checkExitConditions();
-        persistAndBroadcast();
     }
 
     private void processTickForCandle(String instrument, double price) {
@@ -347,6 +375,8 @@ public class BreakoutV2StrategyEngine implements TradingEngine {
         formingCandles.clear();
         legCandleCount.clear();
         breakoutTriggered.clear();
+        aboveHighWhileWatched.clear();
+        pendingReversalLeg = null;
         config.setStrategyKey(strategyKey);
         config.setTradeDirection(TradeDirection.BUY); // V2 is buy-only
 
@@ -418,14 +448,19 @@ public class BreakoutV2StrategyEngine implements TradingEngine {
         TradingConfig config = session.getConfig();
         String startMsg = String.format(
                 "🚀 <b>NIFTY Breakout V2 Started</b>\nUser: <code>%s</code>\nTrade Mode: <code>%s</code>\n" +
+                        "Strike Mode: <code>Auto (premium &gt; %.0f)</code>\nStart Time: <code>%s</code>\n" +
                         "CE: <code>%s</code>  PE: <code>%s</code>\nBreakout pts: <code>%.1f</code>  Max chase: <code>%.1f</code>\n" +
-                        "Lots: <code>%d</code>  Qty: <code>%d</code>\nSL: <code>%s</code>  Target: <code>%.2f</code>\nTrailing: <code>%s</code>",
-                username, config.getTradeMode(), session.getLockedCeInstrument(), session.getLockedPeInstrument(),
+                        "Lots: <code>%d</code>  Qty: <code>%d</code>\nSL: <code>%s</code>  Target: <code>%.2f</code>\nTrailing: <code>%s</code>\n" +
+                        "Max Reversals: <code>%s</code>",
+                username, config.getTradeMode(), MIN_PREMIUM,
+                config.getStartCandleTime() != null ? config.getStartCandleTime().toString() : "—",
+                session.getLockedCeInstrument(), session.getLockedPeInstrument(),
                 config.getBreakoutPoints(), config.getMaxChasePoints(),
                 config.getLotQuantity(), config.getTotalQuantity(),
                 config.getStopLoss() > 0 ? String.format("%.2f", config.getStopLoss()) : "OFF",
                 config.getTargetProfit(),
-                config.getTrailingProfit() > 0 ? String.format("%.2f", config.getTrailingProfit()) : "OFF");
+                config.getTrailingProfit() > 0 ? String.format("%.2f", config.getTrailingProfit()) : "OFF",
+                config.getMaxReversals() < 0 ? "unlimited" : String.valueOf(config.getMaxReversals()));
         sendTelegram(startMsg);
     }
 
@@ -502,6 +537,14 @@ public class BreakoutV2StrategyEngine implements TradingEngine {
         if (restored.getState() == StrategyState.WAITING_FOR_CANDLES && restored.getLockedCeInstrument() == null
                 && restored.getConfig() != null) {
             scheduleStrikeSelection(restored.getSessionId(), restored.getTradeDate(), restored.getConfig().getStartCandleTime());
+        }
+        // Best-effort: pendingReversalLeg/aboveHighWhileWatched aren't persisted, so a crash mid
+        // reversal-wait falls back to re-seeding the baseline for whichever leg is currently open
+        // (if any) — a conservative default that requires a fresh High cross to re-arm, same as a
+        // brand-new entry would.
+        TradeEntry openLeg = restored.getCurrentOpenLeg();
+        if (restored.getState() == StrategyState.IN_POSITION && openLeg != null) {
+            seedReversalWatchBaseline(openLeg.getOptionType());
         }
         log.info("[{}][BREAKOUT_V2] Session {} restored (state={})", username, restored.getSessionId(), restored.getState());
     }
@@ -759,6 +802,15 @@ public class BreakoutV2StrategyEngine implements TradingEngine {
         return (currentPrice - entryPrice) * qty;
     }
 
+    /**
+     * config.maxChasePoints plus chasePointsGrowth accumulated so far — the runaway-abandon
+     * threshold escalates after each losing reversal exit (see exitCurrentPosition()), so a
+     * subsequent chase attempt is given more room to recover the points already lost.
+     */
+    private double effectiveMaxChasePoints() {
+        return session.getConfig().getMaxChasePoints() + session.getChasePointsGrowth();
+    }
+
     private void enterBreakoutV2(OptionType leg, double entryTargetPrice, String reason) {
         TradingConfig cfg = session.getConfig();
         String instrument = leg == OptionType.CE ? session.getLockedCeInstrument() : session.getLockedPeInstrument();
@@ -788,17 +840,36 @@ public class BreakoutV2StrategyEngine implements TradingEngine {
         session.setCurrentLegNumber(entry.getLegNumber());
         session.getTradeLegs().add(entry);
         session.setState(StrategyState.IN_POSITION);
+        seedReversalWatchBaseline(leg);
 
         if (isAdmin()) {
             String msg = String.format(
                     "✅ <b>Breakout V2 Position Entered</b>\nType: <code>BUY %s</code>\nInstrument: <code>%s</code>\n" +
-                            "Target Entry: <code>%.2f</code>\nActual Entry: <code>%.2f</code>\nQty: <code>%d</code>\nReason: <code>%s</code>",
-                    leg, instrument, entryTargetPrice, entryPrice, entry.getQuantity(), reason);
+                            "Target Entry: <code>%.2f</code>\nActual Entry: <code>%.2f</code>\nQty: <code>%d</code>\n" +
+                            "Breakout Pts: <code>%.1f</code>\nReversals: <code>%d/%s</code>\nReason: <code>%s</code>",
+                    leg, instrument, entryTargetPrice, entryPrice, entry.getQuantity(),
+                    cfg.getBreakoutPoints(), session.getReversalCount(),
+                    cfg.getMaxReversals() < 0 ? "unlimited" : String.valueOf(cfg.getMaxReversals()), reason);
             sendTelegram(msg);
         }
 
         log.info("[{}][BREAKOUT_V2] Entered leg={} type={} instrument={} targetEntry={} actualEntry={} reason={}",
                 username, entry.getLegNumber(), leg, instrument, entryTargetPrice, entryPrice, reason);
+    }
+
+    /**
+     * Seeds the reversal-watch baseline for the leg OPPOSITE the one just entered — records
+     * whether it's already above its own reference high right now (without treating that as a
+     * fresh breach) so the very next genuine cross is what triggers the reversal, not a stale
+     * "already above" condition left over from earlier in the session.
+     */
+    private void seedReversalWatchBaseline(OptionType enteredLeg) {
+        OptionType otherLeg = enteredLeg == OptionType.CE ? OptionType.PE : OptionType.CE;
+        Candle otherRef = session.getLegReferenceCandles().get(otherLeg.name());
+        String otherInstrument = otherLeg == OptionType.CE ? session.getLockedCeInstrument() : session.getLockedPeInstrument();
+        Double otherPrice = otherInstrument != null ? priceCache.get(otherInstrument) : null;
+        boolean nowAbove = otherRef != null && otherPrice != null && otherPrice > otherRef.getHigh();
+        aboveHighWhileWatched.put(otherLeg.name(), nowAbove);
     }
 
     private void exitCurrentPosition(String reason) {
@@ -823,13 +894,28 @@ public class BreakoutV2StrategyEngine implements TradingEngine {
         session.setCumulativePnL(session.getCumulativePnL() + legPnl);
         session.setOpenPnL(0);
 
+        // A reversal-triggered exit that closed at a loss grows the runaway-abandon threshold
+        // for the NEXT chase attempt by exactly the points lost here — a profitable reversal
+        // exit (or any other exit reason) leaves the threshold unchanged.
+        if ("REVERSAL_HIGH_BREACH".equals(reason)) {
+            double lostPoints = Math.max(0, openLeg.getEntryPrice() - exitPrice);
+            if (lostPoints > 0) {
+                session.setChasePointsGrowth(session.getChasePointsGrowth() + lostPoints);
+                log.info("[{}][BREAKOUT_V2] Reversal exit lost {} points — max-chase threshold now {}",
+                        username, lostPoints, session.getConfig().getMaxChasePoints() + session.getChasePointsGrowth());
+            }
+        }
+
         log.info("[{}][BREAKOUT_V2] Exited leg={} type={} exit={} legPnL={} cumPnL={} reason={}",
                 username, openLeg.getLegNumber(), openLeg.getOptionType(), exitPrice, legPnl, session.getCumulativePnL(), reason);
 
         if (isAdmin()) {
+            TradingConfig cfg = session.getConfig();
             String msg = String.format(
-                    "🔚 <b>Breakout V2 Position Exited</b>\nType: <code>%s</code>\nInstrument: <code>%s</code>\nEntry: <code>%.2f</code>\nExit: <code>%.2f</code>\nP/L: <code>%.2f</code>\nReason: <code>%s</code>",
-                    openLeg.getOptionType(), openLeg.getInstrument(), openLeg.getEntryPrice(), exitPrice, legPnl, reason);
+                    "🔚 <b>Breakout V2 Position Exited</b>\nType: <code>%s</code>\nInstrument: <code>%s</code>\nEntry: <code>%.2f</code>\nExit: <code>%.2f</code>\nP/L: <code>%.2f</code>\n" +
+                            "Reversals: <code>%d/%s</code>\nReason: <code>%s</code>",
+                    openLeg.getOptionType(), openLeg.getInstrument(), openLeg.getEntryPrice(), exitPrice, legPnl,
+                    session.getReversalCount(), cfg.getMaxReversals() < 0 ? "unlimited" : String.valueOf(cfg.getMaxReversals()), reason);
             sendTelegram(msg);
         }
     }
@@ -900,9 +986,13 @@ public class BreakoutV2StrategyEngine implements TradingEngine {
                     ? session.getEndTime().format(IST_FMT) + " IST"
                     : LocalDateTime.now(ZoneId.of("Asia/Kolkata")).format(IST_FMT) + " IST";
             double totalPnl = session.getCumulativePnL();
+            TradingConfig cfg = session.getConfig();
             String simple = String.format(
-                    "🔔 <b>Breakout V2 Strategy Stopped</b>\nUser: <code>%s</code>\nStop Reason: <code>%s</code>\nTime: <code>%s</code>\n\n💰 <b>P&amp;L: %.0f</b>",
-                    username, stopReason, endT, totalPnl);
+                    "🔔 <b>Breakout V2 Strategy Stopped</b>\nUser: <code>%s</code>\nStop Reason: <code>%s</code>\nTime: <code>%s</code>\n" +
+                            "Reversals: <code>%d/%s</code>\n\n💰 <b>P&amp;L: %.0f</b>",
+                    username, stopReason, endT,
+                    session.getReversalCount(), cfg.getMaxReversals() < 0 ? "unlimited" : String.valueOf(cfg.getMaxReversals()),
+                    totalPnl);
             sendTelegram(simple);
         } catch (Exception e) {
             log.warn("[{}][BREAKOUT_V2] Failed to send Telegram summary: {}", username, e.getMessage());
@@ -999,6 +1089,8 @@ public class BreakoutV2StrategyEngine implements TradingEngine {
                 .lockedPeStrike(session.getLockedPeStrike())
                 .ceReferenceCandle(toCandleInfo(session.getLegReferenceCandles().get(OptionType.CE.name())))
                 .peReferenceCandle(toCandleInfo(session.getLegReferenceCandles().get(OptionType.PE.name())))
+                .breakoutPoints(cfg.getBreakoutPoints())
+                .maxChasePoints(effectiveMaxChasePoints())
                 .build();
     }
 

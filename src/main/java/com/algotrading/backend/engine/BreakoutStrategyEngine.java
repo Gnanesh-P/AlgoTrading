@@ -188,16 +188,24 @@ public class BreakoutStrategyEngine implements TradingEngine {
             TradeEntry openLeg = session.getCurrentOpenLeg();
             if (openLeg != null && openLeg.getOptionType() != leg) {
                 TradingConfig cfg = session.getConfig();
-                boolean reversalAllowed = cfg.isReversalEnabled()
-                        && (cfg.getMaxReversals() < 0 || session.getReversalCount() < cfg.getMaxReversals());
-                if (reversalAllowed) {
-                    log.info("[{}][BREAKOUT] Intrabar reversal {} → {} @ {}", username, openLeg.getOptionType(), leg, price);
-                    exitCurrentPosition("REVERSAL");
-                    session.setReversalCount(session.getReversalCount() + 1);
-                    enterBreakout(leg, "REVERSAL_" + session.getReversalCount());
-                    checkExitConditions();
+                if (!cfg.isReversalEnabled()) return; // reversal not a feature for this run — ignore, no-op
+
+                boolean capReached = cfg.getMaxReversals() >= 0 && session.getReversalCount() >= cfg.getMaxReversals();
+                if (capReached) {
+                    log.info("[{}][BREAKOUT] Max reversals ({}) reached — {} breakout stops the algo instead of reversing",
+                            username, cfg.getMaxReversals(), leg);
+                    exitCurrentPosition("MAX_REVERSALS");
+                    internalStopSession("Max reversals (" + cfg.getMaxReversals() + ") reached");
                     persistAndBroadcast();
+                    return;
                 }
+
+                log.info("[{}][BREAKOUT] Intrabar reversal {} → {} @ {}", username, openLeg.getOptionType(), leg, price);
+                exitCurrentPosition("REVERSAL");
+                session.setReversalCount(session.getReversalCount() + 1);
+                enterBreakout(leg, "REVERSAL_" + session.getReversalCount());
+                checkExitConditions();
+                persistAndBroadcast();
             }
         }
     }
@@ -313,12 +321,17 @@ public class BreakoutStrategyEngine implements TradingEngine {
             scheduleStrikeSelection(session.getSessionId(), session.getTradeDate(), config.getStartCandleTime());
         }
 
+        String strikeModeLabel = config.getStrikeMode() == StrikeMode.AUTO_ATM
+                ? "Auto (premium > 200)" : "Manual";
         String startMsg = String.format(
                 "🚀 <b>Breakout Strategy Started</b>\nUser: <code>%s</code>\nDirection: <code>%s</code>\n" +
-                        "Trade Mode: <code>%s</code>\nFutures: <code>%s</code>\nExpiry: <code>%s</code>\n" +
+                        "Trade Mode: <code>%s</code>\nStrike Mode: <code>%s</code>\nStart Time: <code>%s</code>\n" +
+                        "Futures: <code>%s</code>\nExpiry: <code>%s</code>\n" +
                         "Reversal: <code>%s</code> (max=%s)\nLots: <code>%d</code>  Qty: <code>%d</code>\n" +
                         "SL: <code>%s</code>  Target: <code>%.2f</code>\nTrailing: <code>%s</code>",
-                username, config.getTradeDirection(), config.getTradeMode(), config.getFuturesInstrument(),
+                username, config.getTradeDirection(), config.getTradeMode(), strikeModeLabel,
+                config.getStartCandleTime() != null ? config.getStartCandleTime().toString() : "—",
+                config.getFuturesInstrument(),
                 config.getExpiryType(), config.isReversalEnabled() ? "ON" : "OFF",
                 config.getMaxReversals() < 0 ? "unlimited" : String.valueOf(config.getMaxReversals()),
                 config.getLotQuantity(), config.getTotalQuantity(),
@@ -450,7 +463,7 @@ public class BreakoutStrategyEngine implements TradingEngine {
         if (session.getState() == StrategyState.IN_POSITION) {
             exitCurrentPosition("EOD");
         }
-        internalStopSession("End of day square-off at 15:29");
+        internalStopSession("End of day square-off at 15:14");
         sessionPersistence.clearForUser(EngineKeys.of(username, strategyKey));
         broadcastUpdate();
     }
@@ -739,8 +752,10 @@ public class BreakoutStrategyEngine implements TradingEngine {
 
         if (isAdmin()) {
             String msg = String.format(
-                    "✅ <b>Breakout Position Entered</b>\nType: <code>%s %s</code>\nInstrument: <code>%s</code>\nPrice: <code>%.2f</code>\nQty: <code>%d</code>\nReason: <code>%s</code>",
-                    isSell ? "SELL" : "BUY", leg, instrument, entryPrice, entry.getQuantity(), reason);
+                    "✅ <b>Breakout Position Entered</b>\nType: <code>%s %s</code>\nInstrument: <code>%s</code>\nPrice: <code>%.2f</code>\nQty: <code>%d</code>\n" +
+                            "Reversals: <code>%d/%s</code>\nReason: <code>%s</code>",
+                    isSell ? "SELL" : "BUY", leg, instrument, entryPrice, entry.getQuantity(),
+                    session.getReversalCount(), cfg.getMaxReversals() < 0 ? "unlimited" : String.valueOf(cfg.getMaxReversals()), reason);
             sendTelegram(msg);
         }
 
@@ -776,9 +791,12 @@ public class BreakoutStrategyEngine implements TradingEngine {
                 username, openLeg.getLegNumber(), openLeg.getOptionType(), exitPrice, legPnl, session.getCumulativePnL(), reason);
 
         if (isAdmin()) {
+            TradingConfig cfg = session.getConfig();
             String msg = String.format(
-                    "🔚 <b>Breakout Position Exited</b>\nType: <code>%s</code>\nInstrument: <code>%s</code>\nEntry: <code>%.2f</code>\nExit: <code>%.2f</code>\nP/L: <code>%.2f</code>\nReason: <code>%s</code>",
-                    openLeg.getOptionType(), openLeg.getInstrument(), openLeg.getEntryPrice(), exitPrice, legPnl, reason);
+                    "🔚 <b>Breakout Position Exited</b>\nType: <code>%s</code>\nInstrument: <code>%s</code>\nEntry: <code>%.2f</code>\nExit: <code>%.2f</code>\nP/L: <code>%.2f</code>\n" +
+                            "Reversals: <code>%d/%s</code>\nReason: <code>%s</code>",
+                    openLeg.getOptionType(), openLeg.getInstrument(), openLeg.getEntryPrice(), exitPrice, legPnl,
+                    session.getReversalCount(), cfg.getMaxReversals() < 0 ? "unlimited" : String.valueOf(cfg.getMaxReversals()), reason);
             sendTelegram(msg);
         }
     }
@@ -849,9 +867,13 @@ public class BreakoutStrategyEngine implements TradingEngine {
                     ? session.getEndTime().format(IST_FMT) + " IST"
                     : LocalDateTime.now(ZoneId.of("Asia/Kolkata")).format(IST_FMT) + " IST";
             double totalPnl = session.getCumulativePnL();
+            TradingConfig cfg = session.getConfig();
             String simple = String.format(
-                    "🔔 <b>Breakout Strategy Stopped</b>\nUser: <code>%s</code>\nStop Reason: <code>%s</code>\nTime: <code>%s</code>\n\n💰 <b>P&amp;L: %.0f</b>",
-                    username, stopReason, endT, totalPnl);
+                    "🔔 <b>Breakout Strategy Stopped</b>\nUser: <code>%s</code>\nStop Reason: <code>%s</code>\nTime: <code>%s</code>\n" +
+                            "Reversals: <code>%d/%s</code>\n\n💰 <b>P&amp;L: %.0f</b>",
+                    username, stopReason, endT,
+                    session.getReversalCount(), cfg.getMaxReversals() < 0 ? "unlimited" : String.valueOf(cfg.getMaxReversals()),
+                    totalPnl);
             sendTelegram(simple);
         } catch (Exception e) {
             log.warn("[{}][BREAKOUT] Failed to send Telegram summary: {}", username, e.getMessage());
