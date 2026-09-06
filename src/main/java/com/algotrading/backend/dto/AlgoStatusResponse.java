@@ -64,6 +64,8 @@ public class AlgoStatusResponse {
     // Zero/unset for every other strategy.
     private double breakoutPoints;
     private double maxChasePoints;
+    // Breakout/Breakout V2 only: "MARKET" | "LIMIT" — ignored (always "LIMIT") for other strategies.
+    private String orderType;
 
     @Data
     @Builder

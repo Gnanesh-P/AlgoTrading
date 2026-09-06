@@ -119,6 +119,9 @@ public class AlgoController {
                 .tradeMode(req.isPaperTrade() ? TradeMode.PAPER : TradeMode.LIVE)
                 .breakoutPoints(req.getBreakoutPoints() > 0 ? req.getBreakoutPoints() : 5.0)
                 .maxChasePoints(req.getMaxChasePoints() > 0 ? req.getMaxChasePoints() : 15.0)
+                .orderType(req.getOrderType() != null && !req.getOrderType().isBlank()
+                        ? OrderType.valueOf(req.getOrderType().toUpperCase())
+                        : OrderType.LIMIT)
                 .build();
 
         log.info("[{}][{}] Config: {} lot(s) = {} qty, mode={}, direction={}", startedBy, strategyKey, lots,

@@ -67,6 +67,14 @@ public class TradingConfig {
     @Builder.Default
     private double maxChasePoints = 15.0;
 
+    // Breakout/Breakout V2 only: MARKET places a real Kite market order (fills at best available
+    // price); LIMIT (default, preserves legacy behavior) places a limit order priced 2% through
+    // the LTP so it fills immediately while still respecting Zerodha's market-protection band.
+    // Either way, the actual Kite-reported average fill price (not the LTP at click time) is what
+    // feeds entryPrice/exitPrice for P&L — see pollActualFillPrice() in both engines.
+    @Builder.Default
+    private OrderType orderType = OrderType.LIMIT;
+
     /**
      * Whether this config is a Bank Nifty strategy. Prefers the authoritative {@link #strategyKey}
      * (always reliably set by AlgoController from which card the user started) over sniffing the

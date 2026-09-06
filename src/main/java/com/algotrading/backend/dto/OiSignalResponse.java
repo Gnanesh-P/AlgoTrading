@@ -46,6 +46,29 @@ public class OiSignalResponse {
     private List<LevelInfo> resistanceLevels;   // RES1..RES3, closest to farthest above spot
     private LocalDateTime levelsAsOf;
 
+    // 10-minute NIFTY OI momentum table (see OiSignalService.recordIntervalSnapshot) — one row per
+    // 10-min bucket since session open (09:15), each showing spot/OI as of that bucket's close, the
+    // Call/Put OI % change vs the previous bucket, a per-interval Direction derived purely from that
+    // OI change, and a running Cumulative Direction ("market strength") score since session open.
+    private List<IntervalRow> intervalTable;
+
+    @Data
+    @Builder
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class IntervalRow {
+        private String label;              // "09:15 – 09:25", or "09:15 (Open)" for the baseline row
+        private double spot;
+        private long callOi;
+        private long putOi;
+        private Double callOiChangePct;    // null on the baseline row (nothing to compare against yet)
+        private Double putOiChangePct;
+        private String direction;          // NEUTRAL | BULLISH | STRONG_BULLISH | BEARISH | STRONG_BEARISH
+        private int directionScore;        // -2..2, this row's contribution to the cumulative score
+        private int cumulativeScore;       // running total since session open, clamped to +/-6
+        private String cumulativeLabel;    // NEUTRAL | BULLISH | STRONG_BULLISH | VERY_STRONG_BULLISH | BEARISH | STRONG_BEARISH | VERY_STRONG_BEARISH
+    }
+
     @Data
     @Builder
     @NoArgsConstructor

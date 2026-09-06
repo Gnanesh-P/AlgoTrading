@@ -64,7 +64,7 @@ window.onload = () => {
 
 function init() {
   const detail = document.getElementById('strategy-detail');
-  detail.innerHTML = STRATEGIES.map(buildCardHtml).join('') + buildOiPanelHtml();
+  detail.innerHTML = STRATEGIES.map(buildCardHtml).join('') + buildOiPanelHtml() + buildDocsPanelHtml();
 
   const sidebar = document.getElementById('strategy-sidebar');
   if (sidebar) sidebar.innerHTML = buildSidebarHtml();
@@ -161,24 +161,27 @@ function buildOiPanelHtml() {
         </div>
       </div>
     </div>
-    <div class="oi-placeholder" id="oi-placeholder">Connect Kite to see the live NIFTY OI signal</div>
+    <div class="oi-placeholder" id="oi-placeholder">Connect Kite to see the live NIFTY OI data</div>
     <div id="oi-panel-content" class="hidden">
-      <div class="oi-signal-badge" id="oi-signal-badge">NEUTRAL</div>
-
-      <div class="oi-gauge-wrap">
-        <div class="oi-gauge"><div class="oi-gauge-marker" id="oi-gauge-marker"></div></div>
-        <div class="oi-gauge-labels">
-          <span>Strong Bearish</span><span>Neutral</span><span>Strong Bullish</span>
-        </div>
-      </div>
-
-      <div class="oi-stat-row">
-        <div class="oi-stat"><div class="oi-stat-label">LTP</div><div class="oi-stat-value" id="oi-ltp">—</div></div>
-        <div class="oi-stat"><div class="oi-stat-label">PCR</div><div class="oi-stat-value" id="oi-pcr">—</div></div>
-      </div>
-      <div class="oi-stat-row">
-        <div class="oi-stat"><div class="oi-stat-label">Call OI Δ</div><div class="oi-stat-value" id="oi-call-change">—</div></div>
-        <div class="oi-stat"><div class="oi-stat-label">Put OI Δ</div><div class="oi-stat-value" id="oi-put-change">—</div></div>
+      <div class="oi-reasoning-title">NIFTY OI Data <span class="oi-interval-hint">(Every 10 Min Interval)</span></div>
+      <div class="table-wrap oi-interval-table-wrap">
+        <table class="trade-table oi-interval-table">
+          <thead>
+            <tr>
+              <th>Time Period</th>
+              <th>Spot</th>
+              <th>Call OI</th>
+              <th>Put OI</th>
+              <th>Call OI %</th>
+              <th>Put OI %</th>
+              <th>Direction</th>
+              <th>Cumulative (Strength)</th>
+            </tr>
+          </thead>
+          <tbody id="oi-interval-rows">
+            <tr><td colspan="8" class="empty-row">Waiting for the first interval snapshot…</td></tr>
+          </tbody>
+        </table>
       </div>
 
       <div class="oi-reasoning-title">OI Support &amp; Resistance <span id="oi-levels-asof" class="oi-levels-asof"></span></div>
@@ -193,12 +196,57 @@ function buildOiPanelHtml() {
         </div>
       </div>
 
-      <div class="oi-reasoning-title">Why</div>
-      <ul class="oi-reasoning-list" id="oi-reasoning-list"></ul>
-
-      <div class="oi-disclaimer">Heuristic read of OI/PCR positioning — not financial advice. Updated <span id="oi-asof">—</span></div>
+      <div class="oi-disclaimer">Heuristic read of OI positioning — not financial advice. Updated <span id="oi-asof">—</span></div>
     </div>
   </div>`;
+}
+
+const OI_DIRECTION_LABELS = {
+  NEUTRAL:        { text: '— Neutral', cls: 'neutral' },
+  BULLISH:        { text: '↑ Bullish', cls: 'bullish' },
+  STRONG_BULLISH: { text: '↑↑ Strong Bullish', cls: 'strong-bullish' },
+  BEARISH:        { text: '↓ Bearish', cls: 'bearish' },
+  STRONG_BEARISH: { text: '↓↓ Strong Bearish', cls: 'strong-bearish' },
+};
+
+const OI_CUMULATIVE_LABELS = {
+  NEUTRAL:             { text: 'Neutral', cls: 'neutral' },
+  BULLISH:             { text: 'Bullish', cls: 'bullish' },
+  STRONG_BULLISH:      { text: 'Strong Bullish', cls: 'strong-bullish' },
+  VERY_STRONG_BULLISH: { text: 'Very Strong Bullish', cls: 'strong-bullish' },
+  BEARISH:             { text: 'Bearish', cls: 'bearish' },
+  STRONG_BEARISH:      { text: 'Strong Bearish', cls: 'strong-bearish' },
+  VERY_STRONG_BEARISH: { text: 'Very Strong Bearish', cls: 'strong-bearish' },
+};
+
+// Renders the 10-min NIFTY OI momentum table (see OiSignalService.recordIntervalSnapshot) —
+// newest interval first so the current reading is always visible without scrolling.
+function renderOiIntervalTable(rows) {
+  const tbody = document.getElementById('oi-interval-rows');
+  if (!tbody) return;
+  if (!rows || rows.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="8" class="empty-row">Waiting for the first interval snapshot…</td></tr>';
+    return;
+  }
+  const pctCell = (v) => v === null || v === undefined
+    ? '<span class="oi-pct-na">—</span>'
+    : `<span class="${v >= 0 ? 'oi-pct-up' : 'oi-pct-down'}">${v >= 0 ? '+' : ''}${v.toFixed(2)}%</span>`;
+
+  tbody.innerHTML = rows.slice().reverse().map(r => {
+    const dir = OI_DIRECTION_LABELS[r.direction] || { text: r.direction || '—', cls: 'neutral' };
+    const cum = OI_CUMULATIVE_LABELS[r.cumulativeLabel] || { text: r.cumulativeLabel || '—', cls: 'neutral' };
+    return `
+      <tr>
+        <td>${r.label}</td>
+        <td class="mono">${Number(r.spot).toLocaleString('en-IN')}</td>
+        <td class="mono">${Number(r.callOi).toLocaleString('en-IN')}</td>
+        <td class="mono">${Number(r.putOi).toLocaleString('en-IN')}</td>
+        <td>${pctCell(r.callOiChangePct)}</td>
+        <td>${pctCell(r.putOiChangePct)}</td>
+        <td><span class="oi-dir-tag oi-dir-${dir.cls}">${dir.text}</span></td>
+        <td><span class="oi-cum-tag oi-cum-${cum.cls}">${cum.text} (${r.cumulativeScore >= 0 ? '+' : ''}${r.cumulativeScore})</span></td>
+      </tr>`;
+  }).join('');
 }
 
 const OI_STRENGTH_LABELS = {
@@ -249,36 +297,200 @@ async function refreshOiSignal() {
     if (content) content.classList.remove('hidden');
 
     setText('oi-expiry', 'Weekly ' + (data.expiryLabel || '—') + (data.monthlyExpiryLabel ? '  ·  Monthly ' + data.monthlyExpiryLabel : ''));
-    setText('oi-ltp', fmt(data.ltp));
-    setText('oi-pcr', (data.pcr || 0).toFixed(2));
-    setText('oi-call-change', (data.callOiChangePct >= 0 ? '+' : '') + (data.callOiChangePct || 0).toFixed(1) + '%');
-    setText('oi-put-change', (data.putOiChangePct >= 0 ? '+' : '') + (data.putOiChangePct || 0).toFixed(1) + '%');
+    renderOiIntervalTable(data.intervalTable);
     renderOiLevels(data.supportLevels, 'oi-support-levels', 'SUP', 'support');
     renderOiLevels(data.resistanceLevels, 'oi-resistance-levels', 'RES', 'resistance');
     setText('oi-levels-asof', data.levelsAsOf ? '· updated ' + formatTime(data.levelsAsOf) : '');
 
     const signalClass = String(data.signal || 'neutral').toLowerCase().replace(/_/g, '-');
-    const badge = document.getElementById('oi-signal-badge');
-    if (badge) {
-      badge.textContent = OI_SIGNAL_LABELS[data.signal] || data.signal;
-      badge.className = 'oi-signal-badge oi-signal-' + signalClass;
-    }
     if (sideDot) sideDot.className = 'side-dot oi-side-dot-' + signalClass;
     if (sideStatus) sideStatus.textContent = OI_SIGNAL_LABELS[data.signal] || data.signal || '—';
-
-    const marker = document.getElementById('oi-gauge-marker');
-    if (marker) {
-      const pct = Math.max(0, Math.min(100, (data.signalScore + 100) / 2));
-      marker.style.left = pct + '%';
-    }
-
-    const list = document.getElementById('oi-reasoning-list');
-    if (list) list.innerHTML = (data.reasoning || []).map(r => `<li>${escapeHtml(r)}</li>`).join('');
 
     setText('oi-asof', data.asOf ? formatTime(data.asOf) : '—');
   } catch (e) {
     console.warn('OI signal fetch failed:', e);
   }
+}
+
+// ===== DOCUMENTATION PAGE (strategy logic reference) =====
+// Static reference content — no backend call, describes the actual engine behavior in
+// engine/ScalpingStrategyEngine.java, engine/BreakoutStrategyEngine.java and
+// engine/BreakoutV2StrategyEngine.java. Kept in sync manually when those engines change.
+function buildDocsPanelHtml() {
+  return `
+  <div class="panel strategy-card docs-panel-card" id="card-DOCS">
+    <div class="card-header">
+      <div class="card-title-group">
+        <span class="card-icon">📄</span>
+        <div>
+          <div style="font-weight:700;font-size:15px;">Strategy Logic Documentation</div>
+          <div class="card-subtitle">Scalping · Breakout V1 · Breakout V2</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="docs-toc">
+      <a href="#docs-shared">Shared Mechanics</a>
+      <a href="#docs-compare">Comparison</a>
+      <a href="#docs-scalping">Scalping</a>
+      <a href="#docs-breakout-v1">Breakout V1</a>
+      <a href="#docs-breakout-v2">Breakout V2</a>
+    </div>
+
+    <div class="docs-section" id="docs-shared">
+      <div class="docs-h2"><span class="docs-h2-icon">⚙️</span> Shared Mechanics</div>
+      <div class="docs-subtitle">Rules every strategy below follows identically</div>
+
+      <div class="docs-h3">Engine model</div>
+      <p class="docs-p">Each (user, strategy) pair runs its own isolated engine instance — e.g. one user running NIFTY Scalping + NIFTY Breakout V2 at the same time has two independent engines, each with its own candles, position and P&amp;L. <span class="docs-badge docs-badge-both">LIVE</span> mode places real Kite orders (limit price 2% through LTP so it fills immediately, then polls the order history for the actual average fill price); <span class="docs-badge docs-badge-both">PAPER</span> mode simulates fills at the live LTP with no broker order.</p>
+
+      <div class="docs-h3">Exit rules (Stop Loss / Target / Trailing)</div>
+      <ul class="docs-list">
+        <li class="docs-li"><b>Stop Loss</b> — session stops the instant total P&amp;L (realized + the open leg's live P&amp;L) drops to <code>-stopLoss</code> or below. Checked on every tick and every candle close.</li>
+        <li class="docs-li"><b>Target</b> (no trailing configured) — session stops the instant total P&amp;L reaches <code>targetProfit</code>.</li>
+        <li class="docs-li"><b>Trailing</b> (trailing &gt; 0) — once total P&amp;L first reaches <code>targetProfit</code>, trailing "arms": a high-watermark starts tracking the best P&amp;L seen since. The session then stops when P&amp;L falls back to <code>highWatermark − trailingProfit</code>, letting winners run instead of capping at the first target touch.</li>
+      </ul>
+
+      <div class="docs-h3">End-of-day &amp; reversal caps</div>
+      <ul class="docs-list">
+        <li class="docs-li">A single scheduled job square-offs every active engine (across all strategies, all users) at <b>15:14 IST</b> if that session's <code>squareOffEod</code> is enabled — closes any open leg at LTP and stops the session.</li>
+        <li class="docs-li"><code>maxReversals = -1</code> means unlimited reversals for that session. Any non-negative value caps it — the reversal that WOULD exceed the cap instead force-stops the whole session (closing any open leg) rather than flipping direction.</li>
+        <li class="docs-li">A manual "Stop" always force-exits any open leg at LTP before stopping, regardless of strategy.</li>
+      </ul>
+
+      <div class="docs-callout">
+        <div class="docs-callout-title">Auto strike selection (shared by Scalping-Auto and Breakout V2)</div>
+        Walks strikes ITM from ATM in strike-step increments on both sides (CE walking down, PE walking up, up to 20 steps), batch-fetches live premiums, and locks the <b>first</b> CE and PE whose premium exceeds <code>₹200</code>. Current-week expiry only. Runs 1 second before the configured start time so both legs are already locked and subscribed by the time the first candle opens.
+      </div>
+    </div>
+
+    <div class="docs-section" id="docs-compare">
+      <div class="docs-h2"><span class="docs-h2-icon">📊</span> Quick Comparison</div>
+      <div class="docs-compare-wrap">
+        <table class="docs-compare">
+          <thead><tr><th></th><th>Scalping</th><th>Breakout V1</th><th>Breakout V2</th></tr></thead>
+          <tbody>
+            <tr><td>Candle size</td><td>1 min (futures)</td><td>5 min (per-leg premium)</td><td>5 min (per-leg premium)</td></tr>
+            <tr><td>Direction</td><td>BUY or SELL (configurable)</td><td>BUY or SELL (configurable)</td><td>BUY only</td></tr>
+            <tr><td>Strike mode</td><td>Manual or Auto (premium&gt;200)</td><td>Manual or Auto (premium&gt;200)</td><td>Auto only (premium&gt;200)</td></tr>
+            <tr><td>Entry trigger</td><td>3rd candle open, after signal from candles 1 &amp; 2</td><td>Instant intrabar breakout of reference High/Low</td><td>Breakout, then a pullback <b>retest</b> before entry</td></tr>
+            <tr><td>Reversal signal</td><td>Candle CLOSE crosses 1st candle's close</td><td>Instant intrabar breakout of the OTHER leg</td><td>Fresh intrabar breach of the OTHER leg's High</td></tr>
+            <tr><td>Reversal leg</td><td>Same leg family, opposite type (CE⇄PE)</td><td>Switches to the other leg entirely</td><td>Switches to the other leg entirely</td></tr>
+            <tr><td>Runaway protection</td><td>—</td><td>—</td><td>Abandons the setup if price runs too far without retesting</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="docs-section" id="docs-scalping">
+      <div class="docs-h2"><span class="docs-h2-icon">⚡</span> Scalping <span class="docs-badge docs-badge-both">NIFTY / BANK NIFTY</span></div>
+      <div class="docs-subtitle">engine/ScalpingStrategyEngine.java — 1-minute futures candles, 3rd-candle entry</div>
+
+      <div class="docs-h3">1. Setup</div>
+      <p class="docs-p">CE/PE instruments are locked once at session start (Manual: user-chosen; Auto: premium&gt;200 walk, scheduled 1s before start time) and reused for the whole day, including across reversals.</p>
+
+      <div class="docs-h3">2. Entry</div>
+      <ol class="docs-list docs-list-numbered">
+        <li class="docs-li">Waits for the 1-min futures candle at/after the configured start time to close — that's <b>candle 1</b>.</li>
+        <li class="docs-li">The very next candle to close is <b>candle 2</b>. The instant it closes, the entry signal is decided: <code>close1 &gt; close2 → signal PE</code>, else <code>signal CE</code>.</li>
+        <li class="docs-li">The traded leg matches the signal in <span class="docs-badge docs-badge-buy">BUY</span> mode, or is the <b>opposite</b> leg in <span class="docs-badge docs-badge-sell">SELL</span> mode (writing the other side). Entry is placed immediately — no waiting for a 3rd candle to close first.</li>
+      </ol>
+
+      <div class="docs-h3">3. Reversal (on every subsequent candle close)</div>
+      <p class="docs-p">The signal — not the traded leg — is compared against <b>candle 1's close</b> (not the previous candle) every time a new candle closes:</p>
+      <ul class="docs-list">
+        <li class="docs-li">Signal is CE and <code>close &lt; close1</code> → reverse signal to PE</li>
+        <li class="docs-li">Signal is PE and <code>close &gt; close1</code> → reverse signal to CE</li>
+      </ul>
+      <p class="docs-p">On reversal: the current leg is exited at LTP, <code>reversalCount</code> increments, and the new leg (per BUY/SELL mapping) is entered at LTP — all on the same candle close, no intrabar checking.</p>
+
+      <div class="docs-table-wrap">
+        <table class="docs-table">
+          <thead><tr><th>Case</th><th>Behavior</th></tr></thead>
+          <tbody>
+            <tr><td>Reversal cap already reached</td><td>The triggering reversal exits the position and stops the whole session with reason <code>MAX_REVERSALS</code> instead of re-entering.</td></tr>
+            <tr><td>SL/Target/Trailing hit immediately after a reversal fill</td><td>Checked right after the new leg is entered — if triggered, the session stops on the spot without waiting for the next candle.</td></tr>
+            <tr><td>No live tick for the instrument to enter/reverse into</td><td>Entry is aborted and the session stops with "No tick data" — never enters blind.</td></tr>
+            <tr><td>Auto strike scan hasn't produced a price yet</td><td>Session stops with "No reference price" rather than hanging indefinitely.</td></tr>
+            <tr><td>Crash/restart mid-session</td><td>Session state is restored from disk; a still-pending Auto strike scan is rescheduled (effectively fires immediately since real time has elapsed).</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="docs-section" id="docs-breakout-v1">
+      <div class="docs-h2"><span class="docs-h2-icon">🚀</span> Breakout V1 <span class="docs-badge docs-badge-both">NIFTY</span></div>
+      <div class="docs-subtitle">engine/BreakoutStrategyEngine.java — 5-minute premium candles, instant intrabar breakout</div>
+
+      <div class="docs-h3">1. Setup &amp; reference</div>
+      <p class="docs-p">ATM CE and PE are both locked at session start. Each leg's own option-premium candle series is tracked independently on 5-minute boundaries anchored to the configured start time (e.g. start=13:02 → buckets are 13:02–13:07, 13:07–13:12, …). The <b>first</b> candle after start time becomes that leg's breakout reference — its <b>High</b> (BUY mode) or <b>Low</b> (SELL mode) is the trigger level. The reference is always the High/Low, never the candle's Close.</p>
+
+      <div class="docs-h3">2. Entry — immediate, intrabar</div>
+      <p class="docs-p">From the moment the reference is set, every tick is checked. The instant a leg's live price crosses its own reference (<code>price &gt; ref.high</code> for BUY, <code>price &lt; ref.low</code> for SELL), that leg is entered <b>immediately</b> — no retest, no waiting for the current candle to close.</p>
+
+      <div class="docs-h3">3. Reversal</div>
+      <p class="docs-p">Only one leg is open at a time. While in position, an intrabar breakout on the <b>other</b> leg is a reversal candidate — but only if <code>reversalEnabled</code> is on for this session; otherwise it's silently ignored (a true no-op, not queued). If allowed and under the cap, the open leg is exited immediately and the other leg is entered in the same tick.</p>
+
+      <div class="docs-table-wrap">
+        <table class="docs-table">
+          <thead><tr><th>Case</th><th>Behavior</th></tr></thead>
+          <tbody>
+            <tr><td><code>reversalEnabled = false</code></td><td>The other leg breaking out while in position is completely ignored — the strategy just rides the current leg to its own SL/Target/Trailing/EOD.</td></tr>
+            <tr><td>Reversal cap reached</td><td>The next opposite-leg breakout stops the whole session (<code>MAX_REVERSALS</code>) instead of reversing.</td></tr>
+            <tr><td><code>maxReversals = -1</code></td><td>Unlimited reversals for the session.</td></tr>
+            <tr><td>Candle display</td><td>Whichever leg's candle closes first is mirrored into the shared first/second/third-candle UI slots — a "data is flowing" indicator; the per-leg reference candles remain the source of truth for breakout logic.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="docs-section" id="docs-breakout-v2">
+      <div class="docs-h2"><span class="docs-h2-icon">🎯</span> Breakout V2 <span class="docs-badge docs-badge-buy">BUY ONLY</span></div>
+      <div class="docs-subtitle">engine/BreakoutV2StrategyEngine.java — breakout + retest entry, with an escalating runaway-abandon threshold</div>
+
+      <div class="docs-h3">1. Setup &amp; reference</div>
+      <p class="docs-p">Strikes are always Auto-selected (no Manual mode) 1s before start time. The first 5-min candle after start time is each leg's reference — same bucketing as V1. This strategy is BUY-only, so P&amp;L and order placement never branch on direction.</p>
+
+      <div class="docs-h3">2. Initial entry — breakout, THEN retest</div>
+      <p class="docs-p">Unlike V1, crossing the reference High doesn't buy immediately — it only arms a "breakout triggered" flag for that leg (sticky: once armed, it stays armed even if price dips back below High). From then on:</p>
+      <ul class="docs-list">
+        <li class="docs-li">Entry fires only when price pulls back to <code>referenceHigh − breakoutPoints</code> (the retest level).</li>
+        <li class="docs-li">If price instead runs up to <code>referenceHigh + maxChasePoints</code> <b>without ever retesting</b>, the setup is judged a runaway and the <b>whole session stops</b>.</li>
+      </ul>
+      <div class="docs-callout">
+        <div class="docs-callout-title">Worked example</div>
+        Reference High = <code>220</code>, breakoutPoints = <code>5</code>. Price breaks 220 → armed. Entry fires if price retraces to <code>215</code>. If price instead runs to <code>220 + 15 = 235</code> (default maxChasePoints=15) without ever touching 215, the session stops as a runaway instead of chasing.
+      </div>
+      <p class="docs-p"><code>breakoutPoints</code> can be changed live from the UI mid-session; <code>maxChasePoints</code> is fixed at session start (but see the escalation rule below).</p>
+
+      <div class="docs-h3">3. Reversal — immediate exit, then its own retest</div>
+      <p class="docs-p">While a position is open, the <b>opposite</b> leg's reference High is watched continuously for a <b>fresh</b> breach (edge-triggered — a leg already sitting above its own High doesn't count; it must newly cross while being watched, so a reversal can't instantly re-flip back). The moment that happens:</p>
+      <ol class="docs-list docs-list-numbered">
+        <li class="docs-li">The current position is exited <b>immediately</b> — no waiting for a retest to exit.</li>
+        <li class="docs-li">The engine goes flat and watches <b>only</b> the breaching leg for its own retest entry (<code>High − breakoutPoints</code>), with the same runaway-abandon check as the initial entry.</li>
+      </ol>
+
+      <div class="docs-h3">4. Escalating chase — the key difference from every other strategy</div>
+      <p class="docs-p">If a reversal exit closes at a <b>loss</b> (i.e. <code>entryPrice &gt; exitPrice</code> for that leg), the points lost — <code>max(0, entryPrice − exitPrice)</code> — are permanently added to a running <code>chasePointsGrowth</code> total for the session. Every subsequent runaway-abandon check then uses <code>config.maxChasePoints + chasePointsGrowth</code> instead of the raw configured value, giving each new chase attempt more room to run before being judged a runaway — recovering the ground lost on the previous failed reversal. A <b>profitable</b> reversal exit leaves the threshold unchanged.</p>
+      <div class="docs-callout">
+        <div class="docs-callout-title">Worked example (continuing above)</div>
+        A reversal exit closes at entry <code>215</code>, exit <code>210</code> → lost <code>5</code> points → <code>chasePointsGrowth</code> becomes <code>5</code>. The next chase attempt's abandon threshold is now <code>maxChasePoints(15) + 5 = 20</code> points past that leg's reference High, instead of the original 15.
+      </div>
+
+      <div class="docs-table-wrap">
+        <table class="docs-table">
+          <thead><tr><th>Case</th><th>Behavior</th></tr></thead>
+          <tbody>
+            <tr><td>Reversal cap reached</td><td>A fresh opposite-High breach stops the whole session (closing the open leg) instead of reversing — same as V1.</td></tr>
+            <tr><td>While flat and waiting on a pending reversal retest</td><td>Only the breaching leg is watched; the other leg cannot trigger a fresh "initial" entry during this window.</td></tr>
+            <tr><td>Reversal exit closes at a profit</td><td><code>chasePointsGrowth</code> does not change — only losing reversal exits grow the threshold.</td></tr>
+            <tr><td>Crash/restart while in position</td><td>The reversal watch baseline is conservatively re-seeded from the current price — the opposite leg must cross its High again to re-arm, even if it was already above it before the crash.</td></tr>
+            <tr><td>Crash/restart while flat mid-retest-wait</td><td><code>pendingReversalLeg</code> isn't persisted, so this resets — a fresh breakout-then-retest sequence is required again after restart.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>`;
 }
 
 function getMaxLotSize() {
@@ -639,6 +851,10 @@ async function saveConfig(key) {
     ? document.getElementById('cfg-reversal-enabled-' + key).checked
     : true;
 
+  const orderType = strat.breakout
+    ? document.getElementById('cfg-order-type-' + key).value
+    : 'LIMIT';
+
   cardState[key].savedConfig = {
     strategyKey:     key,
     tradeDirection:  direction,
@@ -659,6 +875,7 @@ async function saveConfig(key) {
     paperTrade:      document.getElementById('cfg-trade-mode-' + key).value === 'PAPER',
     breakoutPoints,
     maxChasePoints,
+    orderType,
   };
 
   showMsg('config-msg-' + key, '✅ Configuration ready. Click Start to begin.', 'success');
@@ -920,6 +1137,9 @@ function renderSession(key, s) {
       'Reversals: ' + (s.reversalCount || 0) + '/' + (s.maxReversals < 0 ? '∞' : (s.maxReversals || 0)));
     if (strat && strat.hasLiveBreakoutPoints) {
       setText('cfg-chip-breakout-' + key, 'Chase: ' + fmt(s.breakoutPoints || 0) + ' / ' + fmt(s.maxChasePoints || 0));
+    }
+    if (strat && strat.breakout) {
+      setText('cfg-chip-order-type-' + key, s.orderType === 'MARKET' ? '⚡ Market' : '📊 Limit');
     }
     if (s.lockedCeInstrument) setText('cfg-chip-ce-' + key, 'CE: ' + s.lockedCeInstrument);
     if (s.lockedPeInstrument) setText('cfg-chip-pe-' + key, 'PE: ' + s.lockedPeInstrument);
@@ -1506,7 +1726,7 @@ function escapeHtml(str) {
 
 // All "views" that can be shown in the detail panel: the 4 strategy cards plus the NIFTY OI
 // signal card (moved into the sidebar nav + detail panel, same selection mechanism as a strategy).
-const VIEW_KEYS = [...STRATEGIES.map(s => s.key), 'OI_SIGNAL'];
+const VIEW_KEYS = [...STRATEGIES.map(s => s.key), 'OI_SIGNAL', 'DOCS'];
 
 function selectView(key) {
   selectedStrategy = key;
@@ -1562,7 +1782,19 @@ function buildSidebarHtml() {
         </div>
       </div>`;
 
-  return groups + oiGroup + `
+  const docsGroup = `
+      <div class="side-group">
+        <div class="side-group-label">📚 RESOURCES</div>
+        <div class="side-item" id="side-item-DOCS" onclick="selectView('DOCS')">
+          <span class="side-item-icon">📄</span>
+          <div class="side-item-main">
+            <div class="side-item-title">Documents</div>
+            <div class="side-item-sub"><span>Strategy logic reference</span></div>
+          </div>
+        </div>
+      </div>`;
+
+  return groups + oiGroup + docsGroup + `
     <div class="sidebar-stopall-wrap">
       <div class="sidebar-cumulative-pnl" id="sidebar-cumulative-pnl">
         <div class="scp-row">
@@ -1661,6 +1893,20 @@ function buildCardHtml(s) {
           </div>
         </div>` : '';
 
+  // Order Type (Market/Limit) — Breakout + Breakout V2 only (see BreakoutStrategyEngine /
+  // BreakoutV2StrategyEngine). Scalping always places LIMIT orders and has no such option.
+  const orderTypeRow = s.breakout ? `
+        <div class="form-row">
+          <div class="form-group">
+            <label>Order Type</label>
+            <select id="cfg-order-type-${k}">
+              <option value="LIMIT">Limit</option>
+              <option value="MARKET">Market</option>
+            </select>
+            <span style="font-size:11px;color:var(--text2);">Limit fills instantly 2% through LTP; Market fills at best available price. Either way, P&amp;L uses Kite's actual reported fill price, not the LTP at click time.</span>
+          </div>
+        </div>` : '';
+
   return `
   <div class="panel strategy-card" id="card-${k}">
     <div class="card-header">
@@ -1720,6 +1966,7 @@ function buildCardHtml(s) {
         </div>
       </div>
       ${reversalRow}
+      ${orderTypeRow}
       <div class="form-row">
         <div class="form-group">
           <label>Target (₹)</label>
@@ -1790,6 +2037,7 @@ function buildCardHtml(s) {
       <span class="cfg-chip" id="cfg-chip-mode-${k}">—</span>
       <span class="cfg-chip" id="cfg-chip-reversals-${k}">—</span>
       ${s.hasLiveBreakoutPoints ? `<span class="cfg-chip" id="cfg-chip-breakout-${k}">—</span>` : ''}
+      ${s.breakout ? `<span class="cfg-chip" id="cfg-chip-order-type-${k}">—</span>` : ''}
       <span class="cfg-chip" id="cfg-chip-ce-${k}">CE —</span>
       <span class="cfg-chip" id="cfg-chip-pe-${k}">PE —</span>
     </div>

@@ -586,13 +586,16 @@ public class BreakoutStrategyEngine implements TradingEngine {
             attempt++;
             try {
                 double ltp = getLtp(instrument);
-                double limitPrice = roundToTick(ltp * 1.02);
                 OrderParams p = new OrderParams();
                 p.tradingsymbol = instrument;
                 p.exchange = session.getConfig().exchangeSegment();
                 p.transactionType = Constants.TRANSACTION_TYPE_BUY;
-                p.orderType = Constants.ORDER_TYPE_LIMIT;
-                p.price = limitPrice;
+                if (session.getConfig().getOrderType() == OrderType.MARKET) {
+                    p.orderType = Constants.ORDER_TYPE_MARKET; // price left unset — required for MARKET orders
+                } else {
+                    p.orderType = Constants.ORDER_TYPE_LIMIT;
+                    p.price = roundToTick(ltp * 1.02); // 2% through LTP — fills immediately, respects market-protection band
+                }
                 p.quantity = qty;
                 p.product = Constants.PRODUCT_MIS;
                 p.validity = Constants.VALIDITY_DAY;
@@ -626,13 +629,16 @@ public class BreakoutStrategyEngine implements TradingEngine {
             attempt++;
             try {
                 double ltp = getLtp(instrument);
-                double limitPrice = roundToTick(ltp * 0.98);
                 OrderParams p = new OrderParams();
                 p.tradingsymbol = instrument;
                 p.exchange = session.getConfig().exchangeSegment();
                 p.transactionType = Constants.TRANSACTION_TYPE_SELL;
-                p.orderType = Constants.ORDER_TYPE_LIMIT;
-                p.price = limitPrice;
+                if (session.getConfig().getOrderType() == OrderType.MARKET) {
+                    p.orderType = Constants.ORDER_TYPE_MARKET; // price left unset — required for MARKET orders
+                } else {
+                    p.orderType = Constants.ORDER_TYPE_LIMIT;
+                    p.price = roundToTick(ltp * 0.98); // 2% below LTP — fills immediately, respects market-protection band
+                }
                 p.quantity = qty;
                 p.product = Constants.PRODUCT_MIS;
                 p.validity = Constants.VALIDITY_DAY;
@@ -976,6 +982,7 @@ public class BreakoutStrategyEngine implements TradingEngine {
                 .lockedPeStrike(session.getLockedPeStrike())
                 .ceReferenceCandle(toCandleInfo(session.getLegReferenceCandles().get(OptionType.CE.name())))
                 .peReferenceCandle(toCandleInfo(session.getLegReferenceCandles().get(OptionType.PE.name())))
+                .orderType(cfg.getOrderType() != null ? cfg.getOrderType().name() : "LIMIT")
                 .build();
     }
 

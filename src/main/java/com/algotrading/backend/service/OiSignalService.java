@@ -9,10 +9,13 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
+import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.LocalTime;
 import java.time.ZoneId;
+import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
@@ -64,24 +67,33 @@ public class OiSignalService {
     private static final int[] MONTHLY_LEVEL_SCORES = {100, 80, 60};
     private static final int[] WEEKLY_LEVEL_SCORES  = {40, 30, 20};
 
-    private static final Map<String, String> OI_SIGNAL_TELEGRAM_LABELS = Map.of(
-            "STRONG_BULLISH_REVERSAL", "🚀 Strong Bullish Reversal",
-            "BULLISH", "📈 Bullish",
-            "NEUTRAL", "➖ Neutral / Range-bound",
-            "BEARISH", "📉 Bearish",
-            "STRONG_BEARISH_REVERSAL", "🔻 Strong Bearish Reversal"
-    );
+    // 10-min NIFTY OI momentum table — one row per 10-minute bucket from session open to close.
+    // Direction per bucket comes purely from (putOiChangePct - callOiChangePct): Put OI building
+    // faster than Call OI (or Call OI unwinding faster) reads bullish, and vice versa. Cumulative
+    // Direction is a running total of each bucket's directionScore (+2/+1/0/-1/-2), clamped to
+    // +/-CUMULATIVE_CAP so it stays a bounded "market strength so far today" gauge instead of
+    // drifting unbounded over ~37 buckets in a session.
+    private static final LocalTime SESSION_START = LocalTime.of(9, 15);
+    private static final LocalTime MARKET_CLOSE = LocalTime.of(15, 30);
+    private static final int INTERVAL_MINUTES = 10;
+    private static final double OI_DIRECTION_NEUTRAL_BAND = 1.0;    // |diff| below this = Neutral
+    private static final double OI_DIRECTION_STRONG_THRESHOLD = 4.0; // |diff| at/above this = Strong
+    private static final int CUMULATIVE_CAP = 6;
+    private static final DateTimeFormatter HHMM = DateTimeFormatter.ofPattern("HH:mm");
+
+    private final List<OiSignalResponse.IntervalRow> dayIntervals = new ArrayList<>();
+    private LocalDate intervalsDate;
+    private LocalTime lastIntervalBoundary;
+    private int cumulativeScore = 0;
 
     private final KiteProperties kite;
     private final KiteConnect kiteConnect;
     private final KiteInstrumentService kiteInstrumentService;
     private final OptionInstrumentService optionInstrumentService;
-    private final TelegramService telegramService;
 
     private final Deque<Snapshot> history = new ArrayDeque<>();
     private volatile OiSignalResponse cached;
     private volatile long cachedAt = 0;
-    private volatile String lastNotifiedSignal;
 
     // OI-based Support/Resistance level candidates — every strike that made the monthly and/or
     // weekly top-3-by-OI ranking, with its merged score. Refreshed at most every
@@ -177,6 +189,7 @@ public class OiSignalService {
         double putChangePct = baseline != null && baseline.totalPutOi() > 0
                 ? (totalPutOi - baseline.totalPutOi()) * 100.0 / baseline.totalPutOi() : 0;
         recordSnapshot(nowMs, totalCallOi, totalPutOi);
+        recordIntervalSnapshot(ltp, totalCallOi, totalPutOi);
 
         // OI-based Support/Resistance indicator (monthly + weekly merged, top-3 each side) —
         // candidates refresh at most every 30 min (see refreshLevelCandidatesIfStale); the final
@@ -217,11 +230,101 @@ public class OiSignalService {
                 .levelsAsOf(levelsCachedAt > 0
                         ? Instant.ofEpochMilli(levelsCachedAt).atZone(ZoneId.of("Asia/Kolkata")).toLocalDateTime()
                         : null)
+                .intervalTable(new ArrayList<>(dayIntervals))
                 .asOf(LocalDateTime.now(ZoneId.of("Asia/Kolkata")))
                 .build();
 
-        notifyIfSignalChanged(response);
         return response;
+    }
+
+    /**
+     * Appends one row to the 10-min OI momentum table whenever wall-clock time has crossed a new
+     * 10-minute bucket boundary since session open (09:15). Reuses the weekly near-ATM
+     * totalCallOi/totalPutOi already fetched above for the PCR calc — no extra Kite call. The
+     * table (and cumulative score) resets automatically at the start of each new trading day.
+     */
+    private void recordIntervalSnapshot(double ltp, long totalCallOi, long totalPutOi) {
+        ZonedDateTime nowZoned = ZonedDateTime.now(ZoneId.of("Asia/Kolkata"));
+        LocalDate today = nowZoned.toLocalDate();
+        LocalTime nowTime = nowZoned.toLocalTime();
+        if (nowTime.isBefore(SESSION_START)) return;
+
+        if (!today.equals(intervalsDate)) {
+            dayIntervals.clear();
+            intervalsDate = today;
+            lastIntervalBoundary = null;
+            cumulativeScore = 0;
+        }
+
+        LocalTime boundary = currentBoundary(nowTime);
+        if (lastIntervalBoundary != null && !boundary.isAfter(lastIntervalBoundary)) return;
+
+        if (dayIntervals.isEmpty()) {
+            dayIntervals.add(OiSignalResponse.IntervalRow.builder()
+                    .label(SESSION_START.format(HHMM) + " (Open)")
+                    .spot(round2(ltp))
+                    .callOi(totalCallOi)
+                    .putOi(totalPutOi)
+                    .direction("NEUTRAL")
+                    .directionScore(0)
+                    .cumulativeScore(0)
+                    .cumulativeLabel(cumulativeLabelFor(0))
+                    .build());
+        } else {
+            OiSignalResponse.IntervalRow prev = dayIntervals.get(dayIntervals.size() - 1);
+            double callChangePct = prev.getCallOi() > 0
+                    ? (totalCallOi - prev.getCallOi()) * 100.0 / prev.getCallOi() : 0;
+            double putChangePct = prev.getPutOi() > 0
+                    ? (totalPutOi - prev.getPutOi()) * 100.0 / prev.getPutOi() : 0;
+
+            double diff = putChangePct - callChangePct;
+            String direction;
+            int directionScore;
+            if (Math.abs(diff) < OI_DIRECTION_NEUTRAL_BAND) {
+                direction = "NEUTRAL"; directionScore = 0;
+            } else if (diff >= OI_DIRECTION_STRONG_THRESHOLD) {
+                direction = "STRONG_BULLISH"; directionScore = 2;
+            } else if (diff > 0) {
+                direction = "BULLISH"; directionScore = 1;
+            } else if (diff <= -OI_DIRECTION_STRONG_THRESHOLD) {
+                direction = "STRONG_BEARISH"; directionScore = -2;
+            } else {
+                direction = "BEARISH"; directionScore = -1;
+            }
+
+            cumulativeScore = Math.max(-CUMULATIVE_CAP, Math.min(CUMULATIVE_CAP, cumulativeScore + directionScore));
+
+            dayIntervals.add(OiSignalResponse.IntervalRow.builder()
+                    .label(lastIntervalBoundary.format(HHMM) + " – " + boundary.format(HHMM))
+                    .spot(round2(ltp))
+                    .callOi(totalCallOi)
+                    .putOi(totalPutOi)
+                    .callOiChangePct(round2(callChangePct))
+                    .putOiChangePct(round2(putChangePct))
+                    .direction(direction)
+                    .directionScore(directionScore)
+                    .cumulativeScore(cumulativeScore)
+                    .cumulativeLabel(cumulativeLabelFor(cumulativeScore))
+                    .build());
+        }
+        lastIntervalBoundary = boundary;
+    }
+
+    private LocalTime currentBoundary(LocalTime nowTime) {
+        if (!nowTime.isBefore(MARKET_CLOSE)) return MARKET_CLOSE;
+        long minutesSinceOpen = Duration.between(SESSION_START, nowTime).toMinutes();
+        long bucket = (minutesSinceOpen / INTERVAL_MINUTES) * INTERVAL_MINUTES;
+        return SESSION_START.plusMinutes(bucket);
+    }
+
+    private String cumulativeLabelFor(int score) {
+        if (score >= 5) return "VERY_STRONG_BULLISH";
+        if (score >= 3) return "STRONG_BULLISH";
+        if (score >= 1) return "BULLISH";
+        if (score <= -5) return "VERY_STRONG_BEARISH";
+        if (score <= -3) return "STRONG_BEARISH";
+        if (score <= -1) return "BEARISH";
+        return "NEUTRAL";
     }
 
     /**
@@ -336,32 +439,6 @@ public class OiSignalService {
         if (score >= 80) return "STRONG";
         if (score >= 40) return "MEDIUM";
         return "WEAK";
-    }
-
-    /**
-     * Telegram alert only fires when the signal LABEL actually changes (not on every 30s poll) —
-     * otherwise a NEUTRAL/BULLISH reading sitting still would spam the same message forever.
-     * The very first computation since app start always sends one (lastNotifiedSignal starts null),
-     * announcing the current state.
-     */
-    private void notifyIfSignalChanged(OiSignalResponse r) {
-        if (r.getSignal() == null || r.getSignal().equals(lastNotifiedSignal)) return;
-        lastNotifiedSignal = r.getSignal();
-
-        String label = OI_SIGNAL_TELEGRAM_LABELS.getOrDefault(r.getSignal(), r.getSignal());
-        String reasoningHtml = r.getReasoning() == null ? "" : String.join("\n", r.getReasoning().stream()
-                .map(line -> "• " + line).toList());
-
-        String msg = String.format(
-                "📡 <b>NIFTY OI Signal Update</b>\n" +
-                        "Signal: <b>%s</b> (score %+d)\n" +
-                        "LTP: <code>%.2f</code>  PCR: <code>%.2f</code>\n" +
-                        "Support: <code>%d</code>  Resistance: <code>%d</code>\n\n" +
-                        "%s",
-                label, r.getSignalScore(), r.getLtp(), r.getPcr(),
-                r.getSupportStrike(), r.getResistanceStrike(), reasoningHtml);
-
-        telegramService.sendStrategyMessage(msg);
     }
 
     private SignalResult computeSignalScore(double pcr, double callChangePct, double putChangePct,

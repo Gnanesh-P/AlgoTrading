@@ -27,4 +27,5 @@ public class AlgoStartRequest {
     private boolean squareOffEod;
     private double  breakoutPoints;         // NIFTY Breakout V2 only: retest offset (default 5)
     private double  maxChasePoints;         // NIFTY Breakout V2 only: runaway abandon offset (default 15)
+    private String  orderType;              // Breakout/Breakout V2 only: MARKET | LIMIT (default LIMIT)
 }

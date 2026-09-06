@@ -281,45 +281,30 @@ select option { background: var(--bg3); }
 
 /* ===== NIFTY OI / PCR REVERSAL SIGNAL — now just another card in the sidebar/detail workspace,
    selected the same way as a strategy, instead of a separate sticky right-hand column. ===== */
-.oi-panel-card { max-width: 480px; }
+.oi-panel-card { max-width: 900px; }
 
 .oi-placeholder {
   font-size: 13px; color: var(--text2); background: var(--bg3); border: 1px solid var(--border);
   border-radius: var(--radius); padding: 16px; text-align: center; line-height: 1.5;
 }
 
-.oi-signal-badge {
-  text-align: center; font-size: 14px; font-weight: 700; padding: 10px 12px;
-  border-radius: 10px; margin-bottom: 16px; border: 1px solid var(--border);
-  background: var(--bg3); color: var(--text2);
-}
-.oi-signal-strong-bullish-reversal { background: rgba(34,197,94,0.18); color: #22c55e; border-color: rgba(34,197,94,0.4); }
-.oi-signal-bullish                 { background: rgba(34,197,94,0.10); color: #22c55e; border-color: rgba(34,197,94,0.25); }
-.oi-signal-neutral                 { background: rgba(139,148,158,0.12); color: var(--text2); }
-.oi-signal-bearish                 { background: rgba(244,63,94,0.10); color: #f43f5e; border-color: rgba(244,63,94,0.25); }
-.oi-signal-strong-bearish-reversal { background: rgba(244,63,94,0.18); color: #f43f5e; border-color: rgba(244,63,94,0.4); }
+/* 10-min NIFTY OI momentum table — see OiSignalService.recordIntervalSnapshot for the data. */
+.oi-interval-hint { font-size: 10px; font-weight: 400; text-transform: none; color: var(--text2); letter-spacing: 0; }
+.oi-interval-table-wrap { margin-bottom: 18px; max-height: 420px; overflow-y: auto; }
+.oi-interval-table .mono { font-family: monospace; }
+.oi-pct-up   { color: #22c55e; font-family: monospace; }
+.oi-pct-down { color: #f43f5e; font-family: monospace; }
+.oi-pct-na   { color: var(--text2); }
 
-.oi-gauge-wrap { margin-bottom: 18px; }
-.oi-gauge {
-  position: relative; height: 10px; border-radius: 6px; overflow: visible;
-  background: linear-gradient(90deg, #f43f5e 0%, #fbbf24 35%, #8b949e 50%, #fbbf24 65%, #22c55e 100%);
+.oi-dir-tag, .oi-cum-tag {
+  display: inline-block; font-size: 11px; font-weight: 600; padding: 3px 8px;
+  border-radius: 20px; white-space: nowrap; border: 1px solid var(--border);
 }
-.oi-gauge-marker {
-  position: absolute; top: -4px; width: 3px; height: 18px; background: var(--text);
-  border-radius: 2px; left: 50%; transform: translateX(-50%); box-shadow: 0 0 4px rgba(0,0,0,0.5);
-  transition: left 0.3s ease;
-}
-.oi-gauge-labels { display: flex; justify-content: space-between; font-size: 9px; color: var(--text2); margin-top: 6px; text-transform: uppercase; letter-spacing: 0.3px; }
-
-.oi-stat-row { display: flex; gap: 10px; margin-bottom: 10px; }
-.oi-stat {
-  flex: 1; background: var(--bg3); border: 1px solid var(--border); border-radius: var(--radius);
-  padding: 8px 10px; text-align: center;
-}
-.oi-stat-label { font-size: 10px; color: var(--text2); text-transform: uppercase; letter-spacing: 0.4px; margin-bottom: 4px; }
-.oi-stat-value { font-family: monospace; font-size: 14px; font-weight: 700; }
-.oi-support .oi-stat-value { color: #22c55e; }
-.oi-resistance .oi-stat-value { color: #f43f5e; }
+.oi-dir-neutral, .oi-cum-neutral   { background: rgba(139,148,158,0.12); color: var(--text2); }
+.oi-dir-bullish, .oi-cum-bullish   { background: rgba(34,197,94,0.10); color: #22c55e; border-color: rgba(34,197,94,0.25); }
+.oi-dir-strong-bullish, .oi-cum-strong-bullish { background: rgba(34,197,94,0.18); color: #22c55e; border-color: rgba(34,197,94,0.4); }
+.oi-dir-bearish, .oi-cum-bearish   { background: rgba(244,63,94,0.10); color: #f43f5e; border-color: rgba(244,63,94,0.25); }
+.oi-dir-strong-bearish, .oi-cum-strong-bearish { background: rgba(244,63,94,0.18); color: #f43f5e; border-color: rgba(244,63,94,0.4); }
 
 /* OI-based Support/Resistance levels (SUP1-3 / RES1-3) — monthly OI (high priority) merged with
    weekly OI (secondary priority), see OiSignalService for the scoring rules. */
@@ -364,13 +349,79 @@ select option { background: var(--bg3); }
   font-size: 11px; font-weight: 700; color: var(--text2); text-transform: uppercase;
   letter-spacing: 0.5px; margin: 16px 0 8px;
 }
-.oi-reasoning-list { list-style: none; display: flex; flex-direction: column; gap: 8px; }
-.oi-reasoning-list li {
-  font-size: 12px; line-height: 1.5; color: var(--text); padding-left: 14px; position: relative;
-}
-.oi-reasoning-list li::before { content: '•'; position: absolute; left: 0; color: var(--info); }
-
 .oi-disclaimer { font-size: 10px; color: var(--text2); margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--border); line-height: 1.5; }
+
+/* ===== DOCUMENTATION PAGE (strategy logic reference) ===== */
+.docs-panel-card { max-width: 960px; }
+.docs-toc { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 22px; }
+.docs-toc a {
+  font-size: 12px; font-weight: 600; color: var(--text2); background: var(--bg3);
+  border: 1px solid var(--border); border-radius: 20px; padding: 6px 14px; text-decoration: none;
+}
+.docs-toc a:hover { color: var(--text); border-color: var(--accent); }
+
+.docs-section { margin-bottom: 30px; padding-bottom: 26px; border-bottom: 1px solid var(--border); scroll-margin-top: 12px; }
+.docs-section:last-child { border-bottom: none; margin-bottom: 0; padding-bottom: 0; }
+
+.docs-h2 {
+  display: flex; align-items: center; gap: 10px; font-size: 17px; font-weight: 700;
+  margin-bottom: 4px;
+}
+.docs-h2-icon { font-size: 20px; }
+.docs-subtitle { font-size: 12px; color: var(--text2); margin-bottom: 14px; }
+
+.docs-h3 { font-size: 12px; font-weight: 700; color: var(--text2); text-transform: uppercase; letter-spacing: 0.5px; margin: 18px 0 8px; }
+.docs-h3:first-of-type { margin-top: 0; }
+
+.docs-p { font-size: 13px; line-height: 1.65; color: var(--text); margin-bottom: 8px; }
+.docs-p code, .docs-li code, .docs-callout code {
+  background: var(--bg3); border: 1px solid var(--border); border-radius: 4px;
+  padding: 1px 5px; font-family: monospace; font-size: 12px; color: var(--gold);
+}
+
+.docs-list { list-style: none; display: flex; flex-direction: column; gap: 7px; margin-bottom: 8px; }
+.docs-list.docs-list-numbered { counter-reset: docs-step; }
+.docs-list.docs-list-numbered .docs-li { counter-increment: docs-step; padding-left: 26px; }
+.docs-list.docs-list-numbered .docs-li::before {
+  content: counter(docs-step); position: absolute; left: 0; top: 0;
+  width: 18px; height: 18px; border-radius: 50%; background: var(--accent); color: #fff;
+  font-size: 10px; font-weight: 700; display: flex; align-items: center; justify-content: center;
+}
+.docs-li { font-size: 13px; line-height: 1.6; color: var(--text); padding-left: 16px; position: relative; }
+.docs-li::before { content: '•'; position: absolute; left: 0; color: var(--info); }
+
+.docs-callout {
+  background: var(--bg3); border: 1px solid var(--border); border-left: 3px solid var(--accent);
+  border-radius: var(--radius); padding: 10px 14px; font-size: 12.5px; line-height: 1.6;
+  color: var(--text); margin: 10px 0;
+}
+.docs-callout.docs-callout-warning { border-left-color: var(--warning); }
+.docs-callout-title { font-weight: 700; font-size: 11px; text-transform: uppercase; letter-spacing: 0.4px; margin-bottom: 4px; color: var(--text2); }
+
+.docs-badge { display: inline-block; font-size: 10px; font-weight: 700; padding: 2px 8px; border-radius: 12px; text-transform: uppercase; letter-spacing: 0.3px; }
+.docs-badge-buy  { background: rgba(34,197,94,0.15); color: #22c55e; }
+.docs-badge-sell { background: rgba(244,63,94,0.15); color: #f43f5e; }
+.docs-badge-both { background: rgba(99,102,241,0.15); color: #818cf8; }
+
+.docs-table-wrap { overflow-x: auto; border-radius: var(--radius); border: 1px solid var(--border); margin: 10px 0; }
+.docs-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.docs-table th {
+  background: var(--bg3); padding: 8px 10px; text-align: left; font-size: 10.5px; color: var(--text2);
+  font-weight: 700; text-transform: uppercase; letter-spacing: 0.3px; border-bottom: 1px solid var(--border);
+}
+.docs-table td { padding: 8px 10px; border-bottom: 1px solid var(--border); vertical-align: top; line-height: 1.5; }
+.docs-table tr:last-child td { border-bottom: none; }
+.docs-table tr:hover td { background: rgba(255,255,255,0.03); }
+
+.docs-compare-wrap { overflow-x: auto; border-radius: var(--radius); border: 1px solid var(--border); margin-bottom: 24px; }
+.docs-compare { width: 100%; border-collapse: collapse; font-size: 12px; }
+.docs-compare th {
+  background: var(--bg3); padding: 9px 12px; text-align: left; font-size: 11px; color: var(--text);
+  font-weight: 700; border-bottom: 1px solid var(--border); white-space: nowrap;
+}
+.docs-compare td { padding: 9px 12px; border-bottom: 1px solid var(--border); font-size: 12px; line-height: 1.5; }
+.docs-compare tr:last-child td { border-bottom: none; }
+.docs-compare td:first-child { color: var(--text2); font-weight: 600; white-space: nowrap; }
 
 .card-header {
   display: flex; align-items: center; justify-content: space-between;
