@@ -45,6 +45,18 @@ public class PremiumStrikeSelectionService {
         LocalDate expiry = optionInstrumentService.currentWeekExpiry(config);
         int atm = optionInstrumentService.computeAtmStrike(spotPrice, strikeStep);
 
+        // Safety net: if Kite lists no contract for the computed (holiday-adjusted) expiry — e.g. an
+        // unannounced/missed holiday — trade Kite's nearest actual expiry instead of failing.
+        if (kiteInstrumentService.findOption(index, expiry, atm, "CE").isEmpty()) {
+            LocalDate kiteExpiry = kiteInstrumentService.getExpiryDates(index).get("CURRENT_WEEK");
+            if (kiteExpiry != null && !kiteExpiry.equals(expiry)
+                    && kiteInstrumentService.findOption(index, kiteExpiry, atm, "CE").isPresent()) {
+                log.warn("Premium strike selection: no {} contracts for computed expiry {} — using Kite's nearest expiry {}",
+                        index, expiry, kiteExpiry);
+                expiry = kiteExpiry;
+            }
+        }
+
         LinkedHashMap<Integer, KiteInstrument> ceCandidates = new LinkedHashMap<>();
         LinkedHashMap<Integer, KiteInstrument> peCandidates = new LinkedHashMap<>();
         for (int i = 0; i <= SCAN_STEPS; i++) {

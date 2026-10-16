@@ -28,6 +28,7 @@ public class KiteInstrumentService {
 
     private final KiteProperties kite;
     private final KiteConnect kiteConnect;
+    private final NseHolidayService nseHolidayService;
 
     private final List<KiteInstrument> instrumentCache = new ArrayList<>();
     private LocalDate lastFetchDate;
@@ -361,15 +362,29 @@ public class KiteInstrumentService {
 
     /**
      * Used only when instrument cache is empty (Kite not connected yet). NIFTY/BANKNIFTY expire
-     * Tuesday (NSE); SENSEX expires Thursday (BSE).
+     * Tuesday (NSE); SENSEX expires Thursday (BSE). A holiday on the expiry weekday moves expiry
+     * back to the preceding trading day (per NSE's holiday list).
      */
     private LocalDate calendarFallbackExpiry(String indexName, ExpiryType type) {
         DayOfWeek expiryWeekday = "SENSEX".equals(indexName) ? DayOfWeek.THURSDAY : DayOfWeek.TUESDAY;
-        LocalDate d = LocalDate.now();
+        LocalDate today = LocalDate.now();
+        LocalDate d = today;
         while (d.getDayOfWeek() != expiryWeekday) {
             d = d.plusDays(1);
         }
-        return type == ExpiryType.NEXT_WEEK ? d.plusWeeks(1) : d;
+        LocalDate current = holidayAdjusted(d);
+        if (current.isBefore(today)) {
+            d = d.plusWeeks(1);
+            current = holidayAdjusted(d);
+        }
+        return type == ExpiryType.NEXT_WEEK ? holidayAdjusted(d.plusWeeks(1)) : current;
+    }
+
+    private LocalDate holidayAdjusted(LocalDate expiry) {
+        while (nseHolidayService.isNonTradingDay(expiry)) {
+            expiry = expiry.minusDays(1);
+        }
+        return expiry;
     }
 
     private int computeAtm(double price, int strikeGap) {

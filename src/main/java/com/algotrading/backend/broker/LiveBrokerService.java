@@ -114,6 +114,7 @@ public class LiveBrokerService implements BrokerService {
                 params.exchange        = Constants.EXCHANGE_NFO;
                 params.transactionType = transactionType;
                 params.orderType       = Constants.ORDER_TYPE_MARKET;
+                params.marketProtection = -1;                     // Kite rejects API MARKET orders with protection 0
                 params.quantity        = quantity;
                 params.product         = Constants.PRODUCT_MIS;   // intraday
                 params.validity        = Constants.VALIDITY_DAY;

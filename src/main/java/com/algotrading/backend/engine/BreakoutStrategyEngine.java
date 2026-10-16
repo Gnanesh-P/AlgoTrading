@@ -592,6 +592,9 @@ public class BreakoutStrategyEngine implements TradingEngine {
                 p.transactionType = Constants.TRANSACTION_TYPE_BUY;
                 if (session.getConfig().getOrderType() == OrderType.MARKET) {
                     p.orderType = Constants.ORDER_TYPE_MARKET; // price left unset — required for MARKET orders
+                    // Kite rejects API MARKET orders sent with market_protection=0 (the SDK default);
+                    // -1 lets Kite apply its automatic market-protection band.
+                    p.marketProtection = -1;
                 } else {
                     p.orderType = Constants.ORDER_TYPE_LIMIT;
                     p.price = roundToTick(ltp * 1.02); // 2% through LTP — fills immediately, respects market-protection band
@@ -635,6 +638,9 @@ public class BreakoutStrategyEngine implements TradingEngine {
                 p.transactionType = Constants.TRANSACTION_TYPE_SELL;
                 if (session.getConfig().getOrderType() == OrderType.MARKET) {
                     p.orderType = Constants.ORDER_TYPE_MARKET; // price left unset — required for MARKET orders
+                    // Kite rejects API MARKET orders sent with market_protection=0 (the SDK default);
+                    // -1 lets Kite apply its automatic market-protection band.
+                    p.marketProtection = -1;
                 } else {
                     p.orderType = Constants.ORDER_TYPE_LIMIT;
                     p.price = roundToTick(ltp * 0.98); // 2% below LTP — fills immediately, respects market-protection band
@@ -660,6 +666,7 @@ public class BreakoutStrategyEngine implements TradingEngine {
 
     private double pollActualFillPrice(String orderId, String instrument, double fallback) {
         long deadline = System.currentTimeMillis() + 5000;
+        String rejection = null;
         while (System.currentTimeMillis() < deadline) {
             try {
                 List<Order> history = kiteConnect.getOrderHistory(orderId);
@@ -674,6 +681,7 @@ public class BreakoutStrategyEngine implements TradingEngine {
                         }
                     }
                     if ("REJECTED".equalsIgnoreCase(latest.status) || "CANCELLED".equalsIgnoreCase(latest.status)) {
+                        rejection = latest.status + (latest.statusMessage != null ? ": " + latest.statusMessage : "");
                         break;
                     }
                 }
@@ -684,6 +692,11 @@ public class BreakoutStrategyEngine implements TradingEngine {
             } catch (Exception | KiteException e) {
                 break;
             }
+        }
+        // A rejected/cancelled order never filled — fail loudly instead of reporting LTP as a fill.
+        if (rejection != null) {
+            log.error("[{}][BREAKOUT] Order {} for {} was {}", username, orderId, instrument, rejection);
+            throw new IllegalStateException("Kite order " + orderId + " for " + instrument + " " + rejection);
         }
         try {
             String key = session.getConfig().exchangeSegment() + ":" + instrument;
@@ -737,8 +750,16 @@ public class BreakoutStrategyEngine implements TradingEngine {
         }
 
         boolean isSell = cfg.getTradeDirection() == TradeDirection.SELL;
-        double entryPrice = isSell ? placeSellOrder(instrument, cfg.getTotalQuantity())
-                                    : placeBuyOrder(instrument, cfg.getTotalQuantity());
+        double entryPrice;
+        try {
+            entryPrice = isSell ? placeSellOrder(instrument, cfg.getTotalQuantity())
+                                : placeBuyOrder(instrument, cfg.getTotalQuantity());
+        } catch (RuntimeException e) {
+            // Stop instead of rethrowing — otherwise every following tick re-fires the same failing order.
+            log.error("[{}][BREAKOUT] Entry order failed for {} [{}]: {}", username, instrument, reason, e.getMessage());
+            internalStopSession("Entry order failed for " + instrument + ": " + e.getMessage());
+            return;
+        }
 
         TradeEntry entry = TradeEntry.builder()
                 .legNumber(session.getCurrentLegNumber() + 1)

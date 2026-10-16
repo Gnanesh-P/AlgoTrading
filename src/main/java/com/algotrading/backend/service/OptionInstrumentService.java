@@ -67,33 +67,11 @@ public class OptionInstrumentService {
         return findWeeklyExpiry(today, expiryWeekdayFor(config));
     }
 
-    private static final Set<LocalDate> NSE_HOLIDAYS = Set.of(
-        LocalDate.of(2026, 1, 26),
-        LocalDate.of(2026, 2, 19),
-        LocalDate.of(2026, 3, 20),
-        LocalDate.of(2026, 3, 31),
-        LocalDate.of(2026, 4, 2),
-        LocalDate.of(2026, 4, 10),
-        LocalDate.of(2026, 4, 14),
-        LocalDate.of(2026, 5, 1),
-        LocalDate.of(2026, 6, 19),
-        LocalDate.of(2026, 7, 29),
-        LocalDate.of(2026, 8, 15),
-        LocalDate.of(2026, 8, 27),
-        LocalDate.of(2026, 10, 2),
-        LocalDate.of(2026, 10, 21),
-        LocalDate.of(2026, 11, 5),
-        LocalDate.of(2026, 11, 25),
-        LocalDate.of(2026, 12, 25),
-        LocalDate.of(2027, 1, 26),
-        LocalDate.of(2027, 3, 12),
-        LocalDate.of(2027, 3, 30),
-        LocalDate.of(2027, 4, 1),
-        LocalDate.of(2027, 4, 14),
-        LocalDate.of(2027, 5, 1),
-        LocalDate.of(2027, 8, 15),
-        LocalDate.of(2027, 10, 2)
-    );
+    private final NseHolidayService nseHolidayService;
+
+    public OptionInstrumentService(NseHolidayService nseHolidayService) {
+        this.nseHolidayService = nseHolidayService;
+    }
 
     /**
      * First OTM CE strike: always strictly ABOVE price.
@@ -227,7 +205,7 @@ public class OptionInstrumentService {
         while (d.getDayOfWeek() != weekday) {
             d = d.minusDays(1);
         }
-        while (NSE_HOLIDAYS.contains(d) || d.getDayOfWeek() == DayOfWeek.SATURDAY || d.getDayOfWeek() == DayOfWeek.SUNDAY) {
+        while (nseHolidayService.isNonTradingDay(d)) {
             d = d.minusDays(1);
         }
         return d;
@@ -284,15 +262,19 @@ public class OptionInstrumentService {
         while (d.getDayOfWeek() != expiryWeekday) {
             d = d.plusDays(1);
         }
-        // If the expiry weekday is a holiday, step back until we hit a trading day.
-        // NSE_HOLIDAYS is shared across NSE/BSE — Indian exchange holidays are effectively
-        // identical across NSE and BSE, so no separate BSE holiday table is needed.
-        while (NSE_HOLIDAYS.contains(d)
-                || d.getDayOfWeek() == DayOfWeek.SATURDAY
-                || d.getDayOfWeek() == DayOfWeek.SUNDAY) {
-            d = d.minusDays(1);
+        // If the expiry weekday is a holiday (per NSE's live holiday list), step back until we
+        // hit a trading day — e.g. Tuesday holiday → Monday expiry. The NSE list is shared across
+        // NSE/BSE — Indian exchange holidays are effectively identical, so no separate BSE table.
+        LocalDate expiry = d;
+        while (nseHolidayService.isNonTradingDay(expiry)) {
+            expiry = expiry.minusDays(1);
         }
-        return d;
+        // Stepping back landed before `from` (e.g. today is the holiday Tuesday itself, so this
+        // week's contract already expired on Monday) — move on to the following week's expiry.
+        if (expiry.isBefore(from)) {
+            return findWeeklyExpiry(d.plusDays(1), expiryWeekday);
+        }
+        return expiry;
     }
 
     private int countTradingDays(LocalDate from, LocalDate to) {
@@ -300,7 +282,7 @@ public class OptionInstrumentService {
         LocalDate d = from.plusDays(1);
         while (!d.isAfter(to)) {
             DayOfWeek dow = d.getDayOfWeek();
-            if (dow != DayOfWeek.SATURDAY && dow != DayOfWeek.SUNDAY && !NSE_HOLIDAYS.contains(d)) {
+            if (!nseHolidayService.isNonTradingDay(d)) {
                 count++;
             }
             d = d.plusDays(1);
