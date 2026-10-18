@@ -87,7 +87,6 @@ public class BreakoutStrategyEngine implements TradingEngine {
     private final SessionPersistenceService sessionPersistence;
     private final RiskExitEvaluator riskExitEvaluator;
 
-    private static final double AUTO_MIN_PREMIUM = 200.0;
     private volatile ScheduledFuture<?> strikeSelectionTask;
 
     public BreakoutStrategyEngine(TelegramService telegramService,
@@ -322,7 +321,7 @@ public class BreakoutStrategyEngine implements TradingEngine {
         }
 
         String strikeModeLabel = config.getStrikeMode() == StrikeMode.AUTO_ATM
-                ? "Auto (premium > 200)" : "Manual";
+                ? "Auto (premium > " + (int) config.effectiveMinPremium() + ")" : "Manual";
         String startMsg = String.format(
                 "🚀 <b>Breakout Strategy Started</b>\nUser: <code>%s</code>\nDirection: <code>%s</code>\n" +
                         "Trade Mode: <code>%s</code>\nStrike Mode: <code>%s</code>\nStart Time: <code>%s</code>\n" +
@@ -388,9 +387,9 @@ public class BreakoutStrategyEngine implements TradingEngine {
         }
 
         Optional<PremiumStrikeSelectionService.Selection> selection =
-                premiumStrikeSelectionService.selectByPremium(cfg, spot, AUTO_MIN_PREMIUM);
+                premiumStrikeSelectionService.selectByPremium(cfg, spot, cfg.effectiveMinPremium());
         if (selection.isEmpty()) {
-            internalStopSession("No CE/PE strike with premium > " + AUTO_MIN_PREMIUM + " found near spot " + spot
+            internalStopSession("No CE/PE strike with premium > " + cfg.effectiveMinPremium() + " found near spot " + spot
                     + " — instrument cache may not be loaded (connect Kite first)");
             sessionPersistence.saveForUser(EngineKeys.of(username, strategyKey), session);
             broadcastUpdate();

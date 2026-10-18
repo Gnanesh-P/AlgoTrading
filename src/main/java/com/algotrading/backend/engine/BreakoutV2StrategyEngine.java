@@ -41,7 +41,7 @@ import java.util.stream.Collectors;
  * Strikes are auto-selected 1 second before the configured start time (e.g. start=09:20 →
  * selection runs at 09:19:59, so strikes are already locked "by 09:20:00"): walking strikes ITM
  * from ATM on both sides, the first CE and first PE strike whose live premium is greater than
- * {@value #MIN_PREMIUM} are locked for the day, current-week expiry only (see
+ * the configured minimum (config.minPremium: 200 / 170 / 140) are locked for the day, current-week expiry only (see
  * {@link com.algotrading.backend.service.PremiumStrikeSelectionService}; no MANUAL mode, no
  * user-chosen strike). The first 5-min candle after the configured start time (e.g. 09:20 → the
  * 09:20-09:24:59 candle) becomes each leg's reference — its High/Low are the breakout levels,
@@ -77,7 +77,6 @@ public class BreakoutV2StrategyEngine implements TradingEngine {
     private static final DateTimeFormatter IST_FMT = DateTimeFormatter.ofPattern("dd-MMM-yyyy HH:mm:ss");
     private static final int CANDLE_MINUTES = 5;
 
-    private static final double MIN_PREMIUM = 200.0;
 
     @Getter
     private final String username;
@@ -452,7 +451,7 @@ public class BreakoutV2StrategyEngine implements TradingEngine {
                         "CE: <code>%s</code>  PE: <code>%s</code>\nBreakout pts: <code>%.1f</code>  Max chase: <code>%.1f</code>\n" +
                         "Lots: <code>%d</code>  Qty: <code>%d</code>\nSL: <code>%s</code>  Target: <code>%.2f</code>\nTrailing: <code>%s</code>\n" +
                         "Max Reversals: <code>%s</code>",
-                username, config.getTradeMode(), MIN_PREMIUM,
+                username, config.getTradeMode(), config.effectiveMinPremium(),
                 config.getStartCandleTime() != null ? config.getStartCandleTime().toString() : "—",
                 session.getLockedCeInstrument(), session.getLockedPeInstrument(),
                 config.getBreakoutPoints(), config.getMaxChasePoints(),
@@ -467,7 +466,7 @@ public class BreakoutV2StrategyEngine implements TradingEngine {
     /**
      * Auto-selects CE/PE strikes for the day via {@link PremiumStrikeSelectionService} — current
      * week expiry only, first strike per side (walking ITM from ATM) with live premium greater
-     * than {@value #MIN_PREMIUM}. Requires a live Kite connection (both for the spot reference
+     * than config.minPremium (200 / 170 / 140). Requires a live Kite connection (both for the spot reference
      * price and the batch quote call) — there's no historical/paper substitute for real premium
      * data.
      */
@@ -482,9 +481,9 @@ public class BreakoutV2StrategyEngine implements TradingEngine {
         }
 
         Optional<PremiumStrikeSelectionService.Selection> selection =
-                premiumStrikeSelectionService.selectByPremium(session.getConfig(), spot, MIN_PREMIUM);
+                premiumStrikeSelectionService.selectByPremium(session.getConfig(), spot, session.getConfig().effectiveMinPremium());
         if (selection.isEmpty()) {
-            internalStopSession("No CE/PE strike with premium > " + MIN_PREMIUM + " found near spot " + spot
+            internalStopSession("No CE/PE strike with premium > " + session.getConfig().effectiveMinPremium() + " found near spot " + spot
                     + " — instrument cache may not be loaded (connect Kite first)");
             return false;
         }

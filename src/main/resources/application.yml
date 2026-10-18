@@ -35,6 +35,10 @@ app:
   session-file: ${SESSION_FILE:./data/session.json}
   kite-token-file: ${SECRET_TOKEN_FILE:./data/kite-access-token.txt}
   user-session-file: ${USER_SESSION_FILE:./data/session/}
+  strategies:
+    # Show (and allow starting) the 1-min scalping algos: NIFTY / Bank Nifty / Sensex Scalping.
+    # false hides them in the UI and rejects /algo/start for them.
+    scalping-enabled: ${SCALPING_ENABLED:false}
   trading:
     market-open: "09:15"
     market-close: "15:30"

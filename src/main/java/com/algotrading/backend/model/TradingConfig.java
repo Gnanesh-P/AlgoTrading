@@ -63,9 +63,9 @@ public class TradingConfig {
     // retest before entering (the "215 = High(220) - 5" retest offset), and the extra run-up
     // beyond the reference level before the whole session is abandoned as a runaway ("15 points").
     @Builder.Default
-    private double breakoutPoints = 5.0;
+    private double breakoutPoints = 1.5;
     @Builder.Default
-    private double maxChasePoints = 15.0;
+    private double maxChasePoints = 17.0;
 
     // Breakout/Breakout V2 only: MARKET places a real Kite market order (fills at best available
     // price); LIMIT (default, preserves legacy behavior) places a limit order priced 2% through
@@ -74,6 +74,17 @@ public class TradingConfig {
     // feeds entryPrice/exitPrice for P&L — see pollActualFillPrice() in both engines.
     @Builder.Default
     private OrderType orderType = OrderType.LIMIT;
+
+    // Auto strike mode only: the first CE/PE strike (walking ITM from ATM) whose live premium
+    // exceeds this value is locked. Selectable in the UI as 200 / 170 / 140.
+    public static final double DEFAULT_MIN_PREMIUM = 200.0;
+    @Builder.Default
+    private double minPremium = DEFAULT_MIN_PREMIUM;
+
+    /** minPremium, falling back to the default for sessions persisted before this field existed. */
+    public double effectiveMinPremium() {
+        return minPremium > 0 ? minPremium : DEFAULT_MIN_PREMIUM;
+    }
 
     /**
      * Whether this config is a Bank Nifty strategy. Prefers the authoritative {@link #strategyKey}

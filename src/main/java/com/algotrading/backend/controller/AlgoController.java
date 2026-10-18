@@ -13,6 +13,7 @@ import com.algotrading.backend.service.KiteTickerService;
 import com.algotrading.backend.service.UserRegistryService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -24,6 +25,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 @RestController
@@ -37,6 +39,22 @@ public class AlgoController {
     private final KiteTickerService       tickerService;
     private final CandleAggregatorService candleAggregator;
     private final AlgoSchedulerService    schedulerService;
+
+    /** Auto strike mode premium thresholds offered in the UI dropdown. */
+    private static final Set<Double> ALLOWED_MIN_PREMIUMS = Set.of(200.0, 170.0, 140.0);
+
+    /** The 1-minute scalping strategies, shown/startable only when app.strategies.scalping-enabled=true. */
+    private static final Set<StrategyKey> SCALPING_KEYS =
+            Set.of(StrategyKey.NIFTY_SCALP, StrategyKey.BANKNIFTY_SCALP, StrategyKey.SENSEX_SCALP);
+
+    @Value("${app.strategies.scalping-enabled:false}")
+    private boolean scalpingEnabled;
+
+    /** UI feature flags read by app.js on load (e.g. whether to show the 1-min scalping cards). */
+    @GetMapping("/algo/ui-config")
+    public Map<String, Object> uiConfig() {
+        return Map.of("scalpingEnabled", scalpingEnabled);
+    }
 
     private StrategyKey resolveStrategyKey(String raw) {
         if (raw == null || raw.isBlank()) {
@@ -60,6 +78,10 @@ public class AlgoController {
             strategyKey = resolveStrategyKey(req.getStrategyKey());
         } catch (IllegalArgumentException e) {
             return ResponseEntity.badRequest().body(e.getMessage());
+        }
+        if (!scalpingEnabled && SCALPING_KEYS.contains(strategyKey)) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                    .body(strategyKey.displayName() + " is disabled (app.strategies.scalping-enabled=false).");
         }
 
         TradeDirection direction = (req.getTradeDirection() != null && !req.getTradeDirection().isBlank())
@@ -117,8 +139,10 @@ public class AlgoController {
                 .trailingProfit(req.getTrailingProfit())
                 .squareOffEod(req.isSquareOffEod())
                 .tradeMode(req.isPaperTrade() ? TradeMode.PAPER : TradeMode.LIVE)
-                .breakoutPoints(req.getBreakoutPoints() > 0 ? req.getBreakoutPoints() : 5.0)
-                .maxChasePoints(req.getMaxChasePoints() > 0 ? req.getMaxChasePoints() : 15.0)
+                .breakoutPoints(req.getBreakoutPoints() > 0 ? req.getBreakoutPoints() : 1.5)
+                .maxChasePoints(req.getMaxChasePoints() > 0 ? req.getMaxChasePoints() : 17.0)
+                .minPremium(ALLOWED_MIN_PREMIUMS.contains(req.getMinPremium())
+                        ? req.getMinPremium() : TradingConfig.DEFAULT_MIN_PREMIUM)
                 .orderType(req.getOrderType() != null && !req.getOrderType().isBlank()
                         ? OrderType.valueOf(req.getOrderType().toUpperCase())
                         : OrderType.LIMIT)

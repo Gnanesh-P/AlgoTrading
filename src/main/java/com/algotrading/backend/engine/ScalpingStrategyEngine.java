@@ -75,7 +75,6 @@ public class ScalpingStrategyEngine implements TradingEngine {
     private final SessionPersistenceService sessionPersistence;
     private final RiskExitEvaluator riskExitEvaluator;
 
-    private static final double AUTO_MIN_PREMIUM = 200.0;
     private volatile ScheduledFuture<?> strikeSelectionTask;
 
     public ScalpingStrategyEngine(TelegramService telegramService,
@@ -438,7 +437,7 @@ public class ScalpingStrategyEngine implements TradingEngine {
         formingCandles.clear();
 
         String strikeDetail = config.getStrikeMode() == StrikeMode.AUTO_ATM
-                ? "Auto (premium > 200)"
+                ? "Auto (premium > " + (int) config.effectiveMinPremium() + ")"
                 : String.format("Manual | CE: %s | PE: %s",
                         config.getCeInstrument() != null ? config.getCeInstrument() : "—",
                         config.getPeInstrument() != null ? config.getPeInstrument() : "—");
@@ -555,9 +554,9 @@ public class ScalpingStrategyEngine implements TradingEngine {
         }
 
         Optional<PremiumStrikeSelectionService.Selection> selection =
-                premiumStrikeSelectionService.selectByPremium(cfg, spot, AUTO_MIN_PREMIUM);
+                premiumStrikeSelectionService.selectByPremium(cfg, spot, cfg.effectiveMinPremium());
         if (selection.isEmpty()) {
-            internalStopSession("No CE/PE strike with premium > " + AUTO_MIN_PREMIUM + " found near spot " + spot
+            internalStopSession("No CE/PE strike with premium > " + cfg.effectiveMinPremium() + " found near spot " + spot
                     + " — instrument cache may not be loaded (connect Kite first)");
             sessionPersistence.saveForUser(EngineKeys.of(username, strategyKey), session);
             broadcastUpdate();
@@ -994,7 +993,7 @@ public class ScalpingStrategyEngine implements TradingEngine {
             }
 
             String strikeInfo = cfg.getStrikeMode() == StrikeMode.AUTO_ATM
-                    ? String.format("Auto (premium > 200) | CE: %s | PE: %s",
+                    ? String.format("Auto (premium > %d) | CE: %s | PE: %s", (int) cfg.effectiveMinPremium(),
                             session.getLockedCeInstrument() != null ? session.getLockedCeInstrument() : "—",
                             session.getLockedPeInstrument() != null ? session.getLockedPeInstrument() : "—")
                     : String.format("Manual | CE: %s | PE: %s",

@@ -4,13 +4,15 @@ let pricePoller  = null;
 let statusPoller = null;
 
 const STRATEGIES = [
-  { key: 'NIFTY_SCALP',        title: 'NIFTY Scalping',         subtitle: '1-Min Scalping · NIFTY',     icon: '⚡', index: 'NIFTY',     breakout: false, strikeModeToggle: true },
-  { key: 'BANKNIFTY_SCALP',    title: 'Bank Nifty Scalping',     subtitle: '1-Min Scalping · BANKNIFTY', icon: '🏦', index: 'BANKNIFTY', breakout: false, strikeModeToggle: true },
+  { key: 'NIFTY_SCALP',        title: 'NIFTY Scalping',         subtitle: '1-Min Scalping · NIFTY',     icon: '⚡', index: 'NIFTY',     breakout: false, strikeModeToggle: true, scalping: true },
+  { key: 'BANKNIFTY_SCALP',    title: 'Bank Nifty Scalping',     subtitle: '1-Min Scalping · BANKNIFTY', icon: '🏦', index: 'BANKNIFTY', breakout: false, strikeModeToggle: true, scalping: true },
   { key: 'NIFTY_BREAKOUT',     title: 'NIFTY Breakout',          subtitle: '5-Min Breakout · NIFTY',     icon: '🚀', index: 'NIFTY',     breakout: true, strikeModeToggle: true },
   { key: 'BANKNIFTY_BREAKOUT', title: 'Bank Nifty Breakout',     subtitle: '5-Min Breakout · BANKNIFTY', icon: '💥', index: 'BANKNIFTY', breakout: true, strikeModeToggle: true },
-  { key: 'SENSEX_SCALP',       title: 'Sensex Scalping',         subtitle: '1-Min Scalping · SENSEX',    icon: '🎯', index: 'SENSEX',     breakout: false, strikeModeToggle: true },
+  { key: 'SENSEX_SCALP',       title: 'Sensex Scalping',         subtitle: '1-Min Scalping · SENSEX',    icon: '🎯', index: 'SENSEX',     breakout: false, strikeModeToggle: true, scalping: true },
   { key: 'SENSEX_BREAKOUT',    title: 'Sensex Breakout',         subtitle: '5-Min Breakout · SENSEX',    icon: '🌩️', index: 'SENSEX',     breakout: true, strikeModeToggle: true },
-  { key: 'NIFTY_BREAKOUT_V2',  title: 'NIFTY Breakout V2',       subtitle: 'Retest Breakout · NIFTY',    icon: '📐', index: 'NIFTY',     breakout: true, autoStrikeSelect: true, hasLiveBreakoutPoints: true },
+  { key: 'NIFTY_BREAKOUT_V2',  title: 'NIFTY Breakout V2',       subtitle: 'Retest Breakout · NIFTY',    icon: '📐', index: 'NIFTY',     breakout: true, autoStrikeSelect: true, hasLiveBreakoutPoints: true,
+    // Form values every time the V2 card is opened.
+    defaults: { minPremium: 200, breakoutPoints: 1.5, maxChasePoints: 17, lots: 5, target: 5500, stopLoss: 5500, trailing: 750, maxReversals: 1, orderType: 'LIMIT' } },
 ];
 
 // Groups the sidebar nav into sections, one per underlying index.
@@ -62,7 +64,28 @@ window.onload = () => {
   updateClock();
 };
 
-function init() {
+// Removes the 1-min scalping cards unless the backend's app.strategies.scalping-enabled is true.
+// Must run before anything iterates STRATEGIES / VIEW_KEYS.
+async function applyStrategyToggles() {
+  let scalpingEnabled = false;
+  try {
+    const cfg = await get('/algo/ui-config');
+    scalpingEnabled = !!(cfg && cfg.scalpingEnabled);
+  } catch (_) { /* default: hidden, matching the backend default */ }
+  if (scalpingEnabled) return;
+  for (let i = STRATEGIES.length - 1; i >= 0; i--) {
+    if (STRATEGIES[i].scalping) STRATEGIES.splice(i, 1);
+  }
+  for (let i = VIEW_KEYS.length - 1; i >= 0; i--) {
+    if (!STRATEGIES.some(s => s.key === VIEW_KEYS[i]) && !['OI_SIGNAL', 'DOCS'].includes(VIEW_KEYS[i])) {
+      VIEW_KEYS.splice(i, 1);
+    }
+  }
+}
+
+async function init() {
+  await applyStrategyToggles();
+
   const detail = document.getElementById('strategy-detail');
   detail.innerHTML = STRATEGIES.map(buildCardHtml).join('') + buildOiPanelHtml() + buildDocsPanelHtml();
 
@@ -90,6 +113,9 @@ function init() {
     populateStartTimes(key);
     const lotQtyEl = document.getElementById('cfg-lot-qty-' + key);
     if (lotQtyEl) {
+      // Strategy defaults (e.g. V2 = 5 lots) must not exceed the user's plan limit.
+      const maxLots = getMaxLotSize();
+      if ((parseInt(lotQtyEl.value) || 1) > maxLots) lotQtyEl.value = maxLots;
       lotQtyEl.addEventListener('input', () => updateQtyDisplay(key));
       updateQtyDisplay(key);
     }
@@ -360,7 +386,7 @@ function buildDocsPanelHtml() {
 
       <div class="docs-callout">
         <div class="docs-callout-title">Auto strike selection (shared by Scalping-Auto and Breakout V2)</div>
-        Walks strikes ITM from ATM in strike-step increments on both sides (CE walking down, PE walking up, up to 20 steps), batch-fetches live premiums, and locks the <b>first</b> CE and PE whose premium exceeds <code>₹200</code>. Current-week expiry only. Runs 1 second before the configured start time so both legs are already locked and subscribed by the time the first candle opens.
+        Walks strikes ITM from ATM in strike-step increments on both sides (CE walking down, PE walking up, up to 20 steps), batch-fetches live premiums, and locks the <b>first</b> CE and PE whose premium exceeds the selected threshold (<code>₹200</code> / <code>₹170</code> / <code>₹140</code>, default ₹200). Current-week expiry only. Runs 1 second before the configured start time so both legs are already locked and subscribed by the time the first candle opens.
       </div>
     </div>
 
@@ -372,7 +398,7 @@ function buildDocsPanelHtml() {
           <tbody>
             <tr><td>Candle size</td><td>1 min (futures)</td><td>5 min (per-leg premium)</td><td>5 min (per-leg premium)</td></tr>
             <tr><td>Direction</td><td>BUY or SELL (configurable)</td><td>BUY or SELL (configurable)</td><td>BUY only</td></tr>
-            <tr><td>Strike mode</td><td>Manual or Auto (premium&gt;200)</td><td>Manual or Auto (premium&gt;200)</td><td>Auto only (premium&gt;200)</td></tr>
+            <tr><td>Strike mode</td><td>Manual or Auto (premium-based)</td><td>Manual or Auto (premium-based)</td><td>Auto only (premium-based)</td></tr>
             <tr><td>Entry trigger</td><td>3rd candle open, after signal from candles 1 &amp; 2</td><td>Instant intrabar breakout of reference High/Low</td><td>Breakout, then a pullback <b>retest</b> before entry</td></tr>
             <tr><td>Reversal signal</td><td>Candle CLOSE crosses 1st candle's close</td><td>Instant intrabar breakout of the OTHER leg</td><td>Fresh intrabar breach of the OTHER leg's High</td></tr>
             <tr><td>Reversal leg</td><td>Same leg family, opposite type (CE⇄PE)</td><td>Switches to the other leg entirely</td><td>Switches to the other leg entirely</td></tr>
@@ -387,7 +413,7 @@ function buildDocsPanelHtml() {
       <div class="docs-subtitle">engine/ScalpingStrategyEngine.java — 1-minute futures candles, 3rd-candle entry</div>
 
       <div class="docs-h3">1. Setup</div>
-      <p class="docs-p">CE/PE instruments are locked once at session start (Manual: user-chosen; Auto: premium&gt;200 walk, scheduled 1s before start time) and reused for the whole day, including across reversals.</p>
+      <p class="docs-p">CE/PE instruments are locked once at session start (Manual: user-chosen; Auto: premium-threshold walk, scheduled 1s before start time) and reused for the whole day, including across reversals.</p>
 
       <div class="docs-h3">2. Entry</div>
       <ol class="docs-list docs-list-numbered">
@@ -814,8 +840,8 @@ async function saveConfig(key) {
   let expiry = 'CURRENT_WEEK';
   let breakoutPoints = 0, maxChasePoints = 0;
   if (strat.autoStrikeSelect) {
-    breakoutPoints = parseFloat(document.getElementById('cfg-breakout-pts-' + key).value) || 5;
-    maxChasePoints = parseFloat(document.getElementById('cfg-max-chase-' + key).value) || 15;
+    breakoutPoints = parseFloat(document.getElementById('cfg-breakout-pts-' + key).value) || 1.5;
+    maxChasePoints = parseFloat(document.getElementById('cfg-max-chase-' + key).value) || 17;
   } else if (!isAutoStrikeMode) {
     const ceSel = document.getElementById('cfg-ce-strike-' + key);
     const peSel = document.getElementById('cfg-pe-strike-' + key);
@@ -843,9 +869,13 @@ async function saveConfig(key) {
     return;
   }
 
+  // Non-admins don't see the Max Reversals field — use the strategy's default (V2: 1), else 10.
   const maxReversals = isAdmin()
     ? parseInt(document.getElementById('cfg-max-reversals-' + key).value)
-    : 10;
+    : ((strat.defaults && strat.defaults.maxReversals != null) ? strat.defaults.maxReversals : 10);
+
+  const premiumSel = document.getElementById('cfg-min-premium-' + key);
+  const minPremium = isAutoStrikeMode && premiumSel ? parseFloat(premiumSel.value) : 200;
 
   const reversalEnabled = strat.breakout
     ? document.getElementById('cfg-reversal-enabled-' + key).checked
@@ -876,6 +906,7 @@ async function saveConfig(key) {
     breakoutPoints,
     maxChasePoints,
     orderType,
+    minPremium,
   };
 
   showMsg('config-msg-' + key, '✅ Configuration ready. Click Start to begin.', 'success');
@@ -1821,11 +1852,24 @@ function buildCardHtml(s) {
   const expiryOptCurrent = s.index === 'BANKNIFTY' ? 'Current Month' : 'Current Week';
   const expiryOptNext    = s.index === 'BANKNIFTY' ? 'Next Month'    : 'Next Week';
 
+  // Initial form values: per-strategy `defaults` (NIFTY Breakout V2) override the generic ones.
+  const d = Object.assign({ minPremium: 200, breakoutPoints: 5, maxChasePoints: 15, lots: 1, target: 2000,
+                            stopLoss: 0, trailing: 0, maxReversals: 10, orderType: 'LIMIT' }, s.defaults || {});
+  const slOn = d.stopLoss > 0;
+
+  const premiumOpts = [200, 170, 140].map(p =>
+    `<option value="${p}" ${p === d.minPremium ? 'selected' : ''}>₹${p}+</option>`).join('');
   const autoNoteBlock = `
+        <div class="form-row">
+          <div class="form-group">
+            <label>Premium Selector</label>
+            <select id="cfg-min-premium-${k}">${premiumOpts}</select>
+          </div>
+        </div>
         <div class="form-row">
           <div class="form-group" style="flex-direction:row;align-items:flex-start;gap:8px;">
             <span style="font-size:12px;color:var(--text2);line-height:1.5;">
-              Strikes are auto-selected 1s before start time — first CE/PE strike (walking ITM from ATM) with live premium &gt; ₹200, current week expiry only.
+              Strikes are auto-selected 1s before start time — the nearest CE/PE strike (walking ITM from ATM) whose live premium is above the selected value, current week expiry only.
             </span>
           </div>
         </div>`;
@@ -1861,11 +1905,11 @@ function buildCardHtml(s) {
         <div class="form-row">
           <div class="form-group">
             <label>Breakout Points</label>
-            <input type="number" id="cfg-breakout-pts-${k}" value="5" min="0" step="0.5"/>
+            <input type="number" id="cfg-breakout-pts-${k}" value="${d.breakoutPoints}" min="0" step="0.5"/>
           </div>
           <div class="form-group">
             <label>Max Chase Points</label>
-            <input type="number" id="cfg-max-chase-${k}" value="15" min="0" step="0.5"/>
+            <input type="number" id="cfg-max-chase-${k}" value="${d.maxChasePoints}" min="0" step="0.5"/>
           </div>
         </div>`;
   } else if (s.strikeModeToggle) {
@@ -1874,7 +1918,7 @@ function buildCardHtml(s) {
           <div class="form-group">
             <label>Strike Mode</label>
             <select id="cfg-strike-mode-${k}" onchange="onStrikeModeChange('${k}')">
-              <option value="AUTO">Auto (premium &gt; ₹200)</option>
+              <option value="AUTO">Auto (premium-based)</option>
               <option value="MANUAL">Manual</option>
             </select>
           </div>
@@ -1900,8 +1944,8 @@ function buildCardHtml(s) {
           <div class="form-group">
             <label>Order Type</label>
             <select id="cfg-order-type-${k}">
-              <option value="LIMIT">Limit</option>
-              <option value="MARKET">Market</option>
+              <option value="LIMIT" ${d.orderType === 'LIMIT' ? 'selected' : ''}>Limit</option>
+              <option value="MARKET" ${d.orderType === 'MARKET' ? 'selected' : ''}>Market</option>
             </select>
             <span style="font-size:11px;color:var(--text2);">Limit fills instantly 2% through LTP; Market fills at best available price. Either way, P&amp;L uses Kite's actual reported fill price, not the LTP at click time.</span>
           </div>
@@ -1954,7 +1998,7 @@ function buildCardHtml(s) {
         </div>
         <div class="form-group">
           <label>Lots</label>
-          <input type="number" id="cfg-lot-qty-${k}" value="1" min="1"/>
+          <input type="number" id="cfg-lot-qty-${k}" value="${d.lots}" min="1"/>
           <span id="qty-total-hint-${k}" class="admin-only" style="font-size:11px;color:var(--text2);">Qty: <span id="qty-total-${k}">65</span></span>
           <span id="qty-total-hint-user-${k}" class="user-only" style="font-size:11px;color:var(--text2);">Qty: <span id="qty-total-user-${k}">65</span></span>
         </div>
@@ -1962,7 +2006,7 @@ function buildCardHtml(s) {
       <div class="form-row admin-only">
         <div class="form-group">
           <label>Max Reversals</label>
-          <input type="number" id="cfg-max-reversals-${k}" value="10" min="0"/>
+          <input type="number" id="cfg-max-reversals-${k}" value="${d.maxReversals}" min="0"/>
         </div>
       </div>
       ${reversalRow}
@@ -1970,19 +2014,19 @@ function buildCardHtml(s) {
       <div class="form-row">
         <div class="form-group">
           <label>Target (₹)</label>
-          <input type="number" id="cfg-target-${k}" value="2000"/>
+          <input type="number" id="cfg-target-${k}" value="${d.target}"/>
         </div>
         <div class="form-group">
           <label style="display:flex;align-items:center;gap:6px;">
-            <input type="checkbox" id="sl-enabled-${k}" style="width:auto;" onchange="toggleSlEnabled('${k}')"/> Stop Loss (₹)
+            <input type="checkbox" id="sl-enabled-${k}" style="width:auto;" onchange="toggleSlEnabled('${k}')" ${slOn ? 'checked' : ''}/> Stop Loss (₹)
           </label>
-          <input type="number" id="cfg-sl-${k}" value="1000" disabled style="opacity:0.5;"/>
+          <input type="number" id="cfg-sl-${k}" value="${slOn ? d.stopLoss : 1000}" ${slOn ? '' : 'disabled style="opacity:0.5;"'}/>
         </div>
       </div>
       <div class="form-row">
         <div class="form-group">
           <label>Trailing Step (₹)</label>
-          <input type="number" id="cfg-trailing-${k}" value="0"/>
+          <input type="number" id="cfg-trailing-${k}" value="${d.trailing}"/>
         </div>
         <div class="form-group" style="flex-direction:row;align-items:center;gap:8px;">
           <input type="checkbox" id="cfg-eod-${k}" style="width:auto;" checked/>
